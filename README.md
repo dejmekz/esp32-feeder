@@ -29,3 +29,6 @@ For further firmware updates is used library esp32FOTA.
 
 ## Useful libraries
 [esp32FOTA library for Arduino](https://github.com/chrisjoyce911/esp32FOTA)
+
+> [!IMPORTANT]
+> rename include config_tamplate.h to config.h
