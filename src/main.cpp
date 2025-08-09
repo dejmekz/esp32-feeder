@@ -13,7 +13,11 @@
 #include "feeder.h"
 #include "Button.h"
 
-FeederSettings feederSchedule = {{6, 30, 2, true}, {15, 0, 2, true}};
+FeederSettings* feederSchedule = new FeederSettings{
+  new FeedingSettings{FEEDING_HOUR_01, FEEDING_MINUTE_01, FEEDING_PORTIONS_01, FEEDING_TIME, true},
+  new FeedingSettings{FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_TIME, true},
+  new TempAndHumidity{0.0, 0.0}
+};
 
 char DeviceName[16]; // 15 + 1 - delka řetězce + 1 :)
 char mqtt_topic_sensors[31];
@@ -24,9 +28,14 @@ char mqtt_topic_feed[28];
 char mqtt_topic_wifi[28];
 char mqtt_topic_state[29];
 
-esp32FOTA esp32_FOTA("esp32-feeder-motor", FIRMWARE_VERSION, false, true);
+esp32FOTA esp32_FOTA(FOTA_FIRMWARE_TYPE, FIRMWARE_VERSION, false, true);
 
+#ifdef USING_MOTOR
 MotorControl motor(MOTOR_PIN_1, MOTOR_PIN_2);
+#else
+MotorControl motor(SERVO_PIN);
+#endif
+
 Esp32Mqtt espMqtt(WIFI_SSID, WIFI_PASSWORD, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, DeviceName);
 
 DHTesp dht;
@@ -52,7 +61,7 @@ void checkIfExistNewFirmware(int hours, int minutes);
 
 void midNightReset(int hours, int minutes);
 
-void startFeeding(int8_t portions);
+void startFeeding(int8_t portions, unsigned long feedingTime);
 void mqtt_publish_feeding_status(bool feeding);
 
 void setup()
@@ -72,7 +81,7 @@ void setup()
   dht.setup(DHT22_PIN, DHTesp::DHT22);
   espMqtt.setup(mqtt_topic_will, mqttCallback);
 
-  webserver_start(&feederSchedule);
+  webserver_start(feederSchedule);
   webserver_set_callback_feeder(startFeeding);
 }
 
@@ -124,7 +133,13 @@ void loop()
     log_i("Current time: %s", timestampMsg);
 
     midNightReset(hours, minutes);
-    startFeeding(CheckFeedingTime(feederSchedule, hours, minutes));
+
+    FeedingSettings *feedingSetting = CheckFeedingTime(feederSchedule, hours, minutes);
+    if (feedingSetting != nullptr)
+    {
+      log_i("Feeding time detected: %d portions at %02d:%02d", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute);
+      startFeeding(feedingSetting->portions, feedingSetting->feedingTime);
+    }
 
     checkIfExistNewFirmware(hours, minutes);
 
@@ -148,7 +163,7 @@ void loop()
   if (buttState == LOW)
   {
     log_i("Button pressed, starting feeding...");
-    startFeeding(1); // Start feeding with 1 portion
+    startFeeding(1, FEEDING_TIME); // Start feeding with 1 portion
   }
 
   vTaskDelay(100 / portTICK_PERIOD_MS); // Delay to avoid blocking the loop
@@ -206,7 +221,7 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     if (messageTemp == "on")
     {
       log_i("Received 'on' command");
-      motor.start(1); // Start feeding with 1 portion
+      motor.start(1, FEEDING_TIME); // Start feeding with 1 portion
       // Add your code to handle the 'on' command here
     }
     else if (messageTemp == "off")
@@ -219,7 +234,7 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     {
       int portions = messageTemp.substring(5).toInt();
       log_i("Received 'feed' command with %d portions", portions);
-      startFeeding(portions); // Start feeding with specified portions
+      startFeeding(portions, FEEDING_TIME); // Start feeding with specified portions
     }
     else
     {
@@ -237,10 +252,17 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     {
       if (doc["feed01"].is<JsonObject>())
       {
-        feederSchedule.feed01.hour = doc["feed01"]["hour"] | feederSchedule.feed01.hour;
-        feederSchedule.feed01.minute = doc["feed01"]["minute"] | feederSchedule.feed01.minute;
-        feederSchedule.feed01.portions = doc["feed01"]["portions"] | feederSchedule.feed01.portions;
-        feederSchedule.feed01.enabled = true; // Default to true if not specified
+        FeedingSettings* feed01 = feederSchedule->feed01;
+        if (feed01 == nullptr)
+        {
+            feed01 = new FeedingSettings();
+            feederSchedule->feed01 = feed01;
+        }
+
+        feed01->hour = doc["feed01"]["hour"] | feed01->hour;
+        feed01->minute = doc["feed01"]["minute"] | feed01->minute;
+        feed01->portions = doc["feed01"]["portions"] | feed01->portions;
+        feed01->enabled = true; // Default to true if not specified
       }
       else
       {
@@ -248,10 +270,17 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
       }
       if (doc["feed02"].is<JsonObject>())
       {
-        feederSchedule.feed02.hour = doc["feed02"]["hour"] | feederSchedule.feed02.hour;
-        feederSchedule.feed02.minute = doc["feed02"]["minute"] | feederSchedule.feed02.minute;
-        feederSchedule.feed02.portions = doc["feed02"]["portions"] | feederSchedule.feed02.portions;
-        feederSchedule.feed02.enabled = true; // Default to true if not specified
+        FeedingSettings* feed02 = feederSchedule->feed02;
+        if (feed02 == nullptr)
+        {
+            feed02 = new FeedingSettings();
+            feederSchedule->feed02 = feed02;
+        }
+
+        feed02->hour = doc["feed02"]["hour"] | feed02->hour;
+        feed02->minute = doc["feed02"]["minute"] | feed02->minute;
+        feed02->portions = doc["feed02"]["portions"] | feed02->portions;
+        feed02->enabled = true; // Default to true if not specified
       }
       else
       {
@@ -302,20 +331,30 @@ void publishWifiStatus(int minutes, String timestampMsg)
     doc.clear(); // Clear the document for the next use
 
     doc["time"] = timestampMsg;
+    doc["name"] = DeviceName;
+    doc["firmware"] = FIRMWARE_VERSION;
+    doc["type"] = FOTA_FIRMWARE_TYPE;
+    doc["feedtime"] = FEEDING_TIME;
+    doc["feed01"]["hour"] = FEEDING_HOUR_01;
+    doc["feed01"]["minute"] = FEEDING_MINUTE_01;
+    doc["feed01"]["portions"] = FEEDING_PORTIONS_01;
+    doc["feed02"]["hour"] = FEEDING_HOUR_02;
+    doc["feed02"]["minute"] = FEEDING_MINUTE_02;
+    doc["feed02"]["portions"] = FEEDING_PORTIONS_02;
 
-    doc["chip"]["revision"] = ESP.getChipRevision();
-    doc["chip"]["model"] = ESP.getChipModel();
-    doc["chip"]["cores"] = ESP.getChipCores();
+    //doc["chip"]["revision"] = ESP.getChipRevision();
+    //doc["chip"]["model"] = ESP.getChipModel();
+    //doc["chip"]["cores"] = ESP.getChipCores();
 
-    doc["heap"]["total"] = ESP.getHeapSize();
-    doc["heap"]["free"] = ESP.getFreeHeap();
-    doc["heap"]["minFree"] = ESP.getMinFreeHeap();
-    doc["heap"]["maxAlloc"] = ESP.getMaxAllocHeap();
+    //doc["heap"]["total"] = ESP.getHeapSize();
+    //doc["heap"]["free"] = ESP.getFreeHeap();
+    //doc["heap"]["minFree"] = ESP.getMinFreeHeap();
+    //doc["heap"]["maxAlloc"] = ESP.getMaxAllocHeap();
 
-    doc["psram"]["size"] = ESP.getPsramSize();
-    doc["psram"]["available"] = ESP.getFreePsram();
-    doc["psram"]["minFree"] = ESP.getMinFreePsram();
-    doc["psram"]["maxAlloc"] = ESP.getMaxAllocPsram();
+    //doc["psram"]["size"] = ESP.getPsramSize();
+    //doc["psram"]["available"] = ESP.getFreePsram();
+    //doc["psram"]["minFree"] = ESP.getMinFreePsram();
+    //doc["psram"]["maxAlloc"] = ESP.getMaxAllocPsram();
 
     espMqtt.publishJson(mqtt_topic_state, doc);
   }
@@ -338,17 +377,22 @@ void publishSensorData(int minutes, String timestampMsg)
     else
     {
       msg = "OK";
-      feederSchedule.dht22Data = newValues;
+
+      // Cleanup old object before assigning new
+      if (feederSchedule->dht22Data != nullptr) {
+        delete feederSchedule->dht22Data;
+      }
+      feederSchedule->dht22Data = new TempAndHumidity(newValues);
     }
 
-    TempAndHumidity dhtData = feederSchedule.dht22Data;
+    TempAndHumidity* dhtData = feederSchedule->dht22Data;
 
     JsonDocument doc;
     doc["uptime"] = millis() / 1000;
     doc["time"] = timestampMsg;
 
-    doc["DHT22"]["temperature"] = dhtData.temperature;
-    doc["DHT22"]["humidity"] = dhtData.humidity;
+    doc["DHT22"]["temperature"] = dhtData->temperature;
+    doc["DHT22"]["humidity"] = dhtData->humidity;
     doc["DHT22"]["msg"] = "OK";
 
     // serializeJson(doc, Serial);
@@ -358,7 +402,7 @@ void publishSensorData(int minutes, String timestampMsg)
   }
 }
 
-void startFeeding(int8_t portions)
+void startFeeding(int8_t portions, unsigned long feedingTime)
 {
   if (motor.isRunning() || portions <= 0)
   {
@@ -367,7 +411,7 @@ void startFeeding(int8_t portions)
   }
 
   log_i("Starting feeding process...");
-  motor.start(portions);
+  motor.start(portions, feedingTime);
 }
 
 void midNightReset(int hours, int minutes)
@@ -378,8 +422,8 @@ void midNightReset(int hours, int minutes)
   }
 
   // Reset the feeder schedule at midnight
-  feederSchedule.feed01.enabled = true;
-  feederSchedule.feed02.enabled = true;
+  feederSchedule->feed01->enabled = true;
+  feederSchedule->feed02->enabled = true;
   motor.reset();
   log_i("Feeder schedule reset at midnight.");
 }

@@ -2,10 +2,13 @@
 
 An automatic pet feeder that delivers food twice a day at a specific time.
 
+build_flag:
+USING_MOTOR - switch between use a motor shield (L298N) or servo MG995 360°
+
 ## Hardware components
 
 * ESP32 development board
-* L298N
+* L298N / servo MG995 360°
 * 5V/1A power supply
 * dupont jumper wires and connectors
 * RED Led
