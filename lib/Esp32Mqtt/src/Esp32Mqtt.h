@@ -20,11 +20,9 @@ public:
 
     void addWifiInfo(JsonDocument& doc);
 
-    void setJsonCallback(std::function<void(const char*, JsonDocument&)> cb);
     IPAddress getLocalIP();
     uint8_t getRSSI();
     String getSSID();
-
 
     void loop();
 
@@ -45,7 +43,6 @@ private:
     const char* _mqtt_topic_will;
     uint16_t _mqttPort;
 
-    std::function<void(const char*, JsonDocument&)> _jsonCallback;
     std::function<void(char*, uint8_t*, unsigned int)> _mqttCallback;
 
     unsigned long _lastWifiAttempt = 0;

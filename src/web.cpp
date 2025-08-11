@@ -57,10 +57,12 @@ static void updateUI()
         snprintf(temp, 6, "%02d:%02d", feed01->hour, feed01->minute);
         doc["time01"] = String(temp);
         doc["por01"] = feed01->portions;
+        doc["dur01"] = feed01->duration;
 
         snprintf(temp, 6, "%02d:%02d", feed02->hour, feed02->minute);
         doc["time02"] = String(temp);
         doc["por02"] = feed02->portions;
+        doc["dur02"] = feed02->duration;
 
         TempAndHumidity *th = feederSettings->dht22Data;
         doc["temp"] = th->temperature;

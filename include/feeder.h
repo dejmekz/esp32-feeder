@@ -9,7 +9,7 @@ struct FeedingSettings
   int hour;
   int minute;
   int8_t portions;
-  unsigned long feedingTime; // Time in milliseconds to feed
+  unsigned long duration; // Duration in milliseconds to feed
   bool enabled;
 };
 
