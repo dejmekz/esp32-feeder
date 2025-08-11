@@ -14,8 +14,8 @@
 #include "Button.h"
 
 FeederSettings* feederSchedule = new FeederSettings{
-  new FeedingSettings{FEEDING_HOUR_01, FEEDING_MINUTE_01, FEEDING_PORTIONS_01, FEEDING_TIME, true},
-  new FeedingSettings{FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_TIME, true},
+  new FeedingSettings{FEEDING_HOUR_01, FEEDING_MINUTE_01, FEEDING_PORTIONS_01, FEEDING_DURATION, true},
+  new FeedingSettings{FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_DURATION, true},
   new TempAndHumidity{0.0, 0.0}
 };
 
@@ -137,8 +137,8 @@ void loop()
     FeedingSettings *feedingSetting = CheckFeedingTime(feederSchedule, hours, minutes);
     if (feedingSetting != nullptr)
     {
-      log_i("Feeding time detected: %d portions at %02d:%02d", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute);
-      startFeeding(feedingSetting->portions, feedingSetting->feedingTime);
+      log_i("Feeding time detected: %d portions at %02d:%02d for %d ms", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute, feedingSetting->duration);
+      startFeeding(feedingSetting->portions, feedingSetting->duration);
     }
 
     checkIfExistNewFirmware(hours, minutes);
@@ -163,7 +163,7 @@ void loop()
   if (buttState == LOW)
   {
     log_i("Button pressed, starting feeding...");
-    startFeeding(1, FEEDING_TIME); // Start feeding with 1 portion
+    startFeeding(1, FEEDING_DURATION); // Start feeding with 1 portion
   }
 
   vTaskDelay(100 / portTICK_PERIOD_MS); // Delay to avoid blocking the loop
@@ -221,7 +221,7 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     if (messageTemp == "on")
     {
       log_i("Received 'on' command");
-      motor.start(1, FEEDING_TIME); // Start feeding with 1 portion
+      motor.start(1, FEEDING_DURATION); // Start feeding with 1 portion
       // Add your code to handle the 'on' command here
     }
     else if (messageTemp == "off")
@@ -234,7 +234,7 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     {
       int portions = messageTemp.substring(5).toInt();
       log_i("Received 'feed' command with %d portions", portions);
-      startFeeding(portions, FEEDING_TIME); // Start feeding with specified portions
+      startFeeding(portions, FEEDING_DURATION); // Start feeding with specified portions
     }
     else
     {
@@ -334,13 +334,19 @@ void publishWifiStatus(int minutes, String timestampMsg)
     doc["name"] = DeviceName;
     doc["firmware"] = FIRMWARE_VERSION;
     doc["type"] = FOTA_FIRMWARE_TYPE;
-    doc["feedtime"] = FEEDING_TIME;
-    doc["feed01"]["hour"] = FEEDING_HOUR_01;
-    doc["feed01"]["minute"] = FEEDING_MINUTE_01;
-    doc["feed01"]["portions"] = FEEDING_PORTIONS_01;
-    doc["feed02"]["hour"] = FEEDING_HOUR_02;
-    doc["feed02"]["minute"] = FEEDING_MINUTE_02;
-    doc["feed02"]["portions"] = FEEDING_PORTIONS_02;
+
+    FeedingSettings *feed01 = feederSchedule->feed01;
+    FeedingSettings *feed02 = feederSchedule->feed02;
+
+    doc["feed01"]["hour"] = feed01->hour;
+    doc["feed01"]["minute"] = feed01->minute;
+    doc["feed01"]["portions"] = feed01->portions;
+    doc["feed01"]["duration"] = feed01->duration;
+
+    doc["feed02"]["hour"] = feed02->hour;
+    doc["feed02"]["minute"] = feed02->minute;
+    doc["feed02"]["portions"] = feed02->portions;
+    doc["feed02"]["duration"] = feed02->duration;
 
     //doc["chip"]["revision"] = ESP.getChipRevision();
     //doc["chip"]["model"] = ESP.getChipModel();

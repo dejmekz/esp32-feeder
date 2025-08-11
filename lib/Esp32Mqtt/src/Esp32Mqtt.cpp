@@ -1,4 +1,6 @@
 #include "Esp32Mqtt.h"
+#include <esp32-hal-log.h>
+#include <PubSubClient.h>
 
 const char* willMessageOffline = "offline";
 const char* willMessageOnline = "online";
@@ -14,11 +16,10 @@ void Esp32Mqtt::setup(const char* mqtt_topic_will, std::function<void(char*, uin
 
     _initSetup = false;
 
-    WiFi.disconnect(true);
-    delay(1000);
     WiFi.mode(WIFI_STA); // Optional
-    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
-    WiFi.setHostname(_deviceName); // Set a hostname for the ESP32    
+    // WiFi.config() is only needed if you want to set a static IP; otherwise, remove or comment out the following line.
+    // WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE); // Optional, set static IP if needed
+    WiFi.setHostname(_deviceName); // Set a hostname for the ESP32   
 }
 
 void Esp32Mqtt::initAfterWifiConnect() {
@@ -26,14 +27,6 @@ void Esp32Mqtt::initAfterWifiConnect() {
         _mqttClient.setServer(_mqttServer, _mqttPort);
         if (_mqttCallback) {
             _mqttClient.setCallback(_mqttCallback);
-        } else {
-            _mqttClient.setCallback([](char* topic, byte* payload, unsigned int length) {
-                Serial.printf("MQTT message received on topic %s: ", topic);
-                for (unsigned int i = 0; i < length; i++) {
-                    Serial.print((char)payload[i]);
-                }
-                Serial.println();
-            });
         }
         //_mqttClient.setKeepAlive(15); // Keep alive interval in seconds
         //_mqttClient.setSocketTimeout(5); // Socket timeout in seconds
@@ -53,20 +46,6 @@ void Esp32Mqtt::setCallback(MQTT_CALLBACK_SIGNATURE) {
     _mqttClient.setCallback(callback);
 }
 
-void Esp32Mqtt::setJsonCallback(std::function<void(const char*, JsonDocument&)> cb) {
-    _jsonCallback = cb;
-
-    _mqttClient.setCallback([this](char* topic, byte* payload, unsigned int length) {
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, payload);
-        if (!error && _jsonCallback) {
-                _jsonCallback(topic, doc);
-        } else {
-            Serial.println("Failed to parse JSON payload");
-        }
-    });
-}
-
 void Esp32Mqtt::publishJson(const char* topic, JsonDocument& doc) {
     char buffer[512];
     size_t len = serializeJson(doc, buffer);
@@ -74,7 +53,7 @@ void Esp32Mqtt::publishJson(const char* topic, JsonDocument& doc) {
 }
 
 void Esp32Mqtt::loop() {
-    _wifiConnected = WiFi.status() == WL_CONNECTED;
+    _wifiConnected = (WiFi.status() == WL_CONNECTED);
     _mqttConnected = _mqttClient.connected();
 
     if (!_wifiConnected && millis() - _lastWifiAttempt > _wifiRetryInterval) {
@@ -85,8 +64,7 @@ void Esp32Mqtt::loop() {
 
     if (!_wifiConnected) {
         _mqttClient.disconnect();
-        //Serial.println("WiFi not connected, retrying...");
-        return; // Skip MQTT connection if WiFi is not connected
+        return;
     }
 
     initAfterWifiConnect();
@@ -103,7 +81,7 @@ void Esp32Mqtt::loop() {
 
 void Esp32Mqtt::connectWiFi() {
     if (WiFi.status() != WL_CONNECTED) {        
-        Serial.print("Connecting to WiFi...");
+        log_i("Connecting to WiFi SSID: %s", _ssid);
         WiFi.disconnect(); // Ensure we start fresh
         delay(1000); // short delay to avoid overloading
         WiFi.mode(WIFI_STA); // Set WiFi mode to Station
@@ -111,25 +89,24 @@ void Esp32Mqtt::connectWiFi() {
         delay(50); // short delay to avoid overloading
     } else {
         _wifiConnected = true;
-        Serial.println("WiFi connected");        
+        log_i("WiFi connected");
     }
 }
 
 void Esp32Mqtt::connectMQTT() {
     if (!_initSetup || !_wifiConnected) {
-        Serial.println("MQTT not configured or WiFi not connected, skipping MQTT connection");
-        Serial.printf("WiFi status: %d, MQTT configured: %d\n", _wifiConnected, _initSetup);
+        log_e("MQTT not configured or WiFi not connected, skipping MQTT connection");
+        log_i("WiFi status: %d, MQTT configured: %d\n", _wifiConnected, _initSetup);
         return;   //Not configured yet or wifi not connected
     }
 
     if (!_mqttClient.connected()) {
-        Serial.println("Connecting to MQTT...");
+        log_i("Connecting to MQTT...");
         if (_mqttClient.connect(_deviceName, _mqttUser, _mqttPassword, _mqtt_topic_will, 1, true, willMessageOffline)) {
-            Serial.println("MQTT connected");
+            log_i("MQTT connected");
             _mqttClient.publish(_mqtt_topic_will, willMessageOnline, true);
         } else {
-            Serial.print("MQTT connect failed, rc=");
-            Serial.println(_mqttClient.state());
+            log_e("MQTT connect failed, rc=%d", _mqttClient.state());
         }
     }
 }
