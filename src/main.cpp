@@ -6,18 +6,18 @@
 #include "DHTesp.h"
 
 #include "config.h"
-#include "Esp32Mqtt.h"
+#include "wifi_handler.h"
+#include "mqtt_handler.h"
 #include "LedPin.h"
 #include "MotorControl.h"
 #include "web.h"
 #include "feeder.h"
 #include "Button.h"
 
-FeederSettings* feederSchedule = new FeederSettings{
-  new FeedingSettings{FEEDING_HOUR_01, FEEDING_MINUTE_01, FEEDING_PORTIONS_01, FEEDING_DURATION, true},
-  new FeedingSettings{FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_DURATION, true},
-  new TempAndHumidity{0.0, 0.0}
-};
+FeederSettings *feederSchedule = new FeederSettings{
+    new FeedingSettings{FEEDING_HOUR_01, FEEDING_MINUTE_01, FEEDING_PORTIONS_01, FEEDING_DURATION, true},
+    new FeedingSettings{FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_DURATION, true},
+    new TempAndHumidity{0.0, 0.0}};
 
 char DeviceName[16]; // 15 + 1 - delka řetězce + 1 :)
 char mqtt_topic_sensors[31];
@@ -28,6 +28,11 @@ char mqtt_topic_feed[28];
 char mqtt_topic_wifi[28];
 char mqtt_topic_state[29];
 
+bool is_wifi_connected = false;
+bool is_mqtt_connected = false;
+
+int previous_minutes = -1;
+
 esp32FOTA esp32_FOTA(FOTA_FIRMWARE_TYPE, FIRMWARE_VERSION, false, true);
 
 #ifdef USING_MOTOR
@@ -36,36 +41,39 @@ MotorControl motor(MOTOR_PIN_1, MOTOR_PIN_2);
 MotorControl motor(SERVO_PIN);
 #endif
 
-Esp32Mqtt espMqtt(WIFI_SSID, WIFI_PASSWORD, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, DeviceName);
+WiFiClient wifiClient;
 
 DHTesp dht;
 LedPin LedRed(LED_RED_PIN, true);
 LedPin LedBlue(LED_BLUE_PIN, true);
-Button ButtonFeed(BUTTON_PIN);
+Button ButtonFeed(BUTTON_PIN, 100);
 
 bool clockSynced = false;
-bool mqttSynced = false;
 unsigned long lastLoopCheckMillis = 0;
 
 // Ensure webserver_start is declared as a function
 extern void webserver_start(FeederSettings *settings);
 
-void mqttCallback(char *topic, byte *message, unsigned int length);
-void setupMqttAfterConnect();
-void syncWithNTP();
-void setupVariables();
+void mqtt_message_handler(char *topic, byte *message, unsigned int length);
+void mqtt_setup_after_connect();
+void synchronize_clock_from_ntp();
+void setup_variables();
 
-void publishWifiStatus(int minutes, String timestampMsg);
-void publishSensorData(int minutes, String timestampMsg);
+void publish_wifi_status(int minutes, String timestampMsg);
+void publish_sensor_data(int minutes, String timestampMsg);
 void checkIfExistNewFirmware(int hours, int minutes);
 
-void midNightReset(int hours, int minutes);
+void mid_night_reset(int hours, int minutes);
 
-void startFeeding(int8_t portions, unsigned long feedingTime);
+void start_feeding(int8_t portions, unsigned long feedingTime);
 void mqtt_publish_feeding_status(bool feeding);
 
 void setup()
 {
+  wifi_init(DeviceName, WIFI_SSID, WIFI_PASSWORD);
+  mqtt_init(DeviceName, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, mqtt_topic_will);
+  mqtt_set_callback(mqtt_message_handler, mqtt_setup_after_connect);
+
   esp32_FOTA.setManifestURL(FOTA_MANIFEST_URL);
   esp32_FOTA.printConfig();
 
@@ -75,25 +83,36 @@ void setup()
   LedBlue.off();
   LedRed.off();
 
-  setupVariables();
+  setup_variables();
   // Serial.begin(115200);
   log_i("Starting Feeder...");
   dht.setup(DHT22_PIN, DHTesp::DHT22);
-  espMqtt.setup(mqtt_topic_will, mqttCallback);
+
+  // espMqtt.setup(DeviceName, mqtt_topic_will,  mqtt_setup_after_connect, mqtt_message_handler);
 
   webserver_start(feederSchedule);
-  webserver_set_callback_feeder(startFeeding);
+  webserver_set_callback_feeder(start_feeding);
 }
 
 void loop()
 {
   webserver.handleClient();
   LedRed.blink();
-  espMqtt.loop(); // Zpracování MQTT zpráv
+  is_wifi_connected = wifi_loop();
+
+  if (is_wifi_connected)
+  {
+    is_mqtt_connected = mqtt_loop();
+  }
+  else
+  {
+    is_mqtt_connected = false;
+  }
+
+  // espMqtt.loop(); // Zpracování MQTT zpráv
   motor.loop();
 
-  syncWithNTP();
-  setupMqttAfterConnect();
+  synchronize_clock_from_ntp();
 
   if (motor.isRunning())
   {
@@ -101,13 +120,12 @@ void loop()
   }
   else
   {
-    if (espMqtt.isWifiConnected())
+    if (is_mqtt_connected)
     {
       LedBlue.on();
     }
     else
     {
-      mqttSynced = false; // Reset MQTT sync state if WiFi is not connected
       LedBlue.off();
     }
   }
@@ -115,47 +133,55 @@ void loop()
   unsigned long currentMillis = millis();
 
   // 30s interval check
-  if (currentMillis - lastLoopCheckMillis >= 30000)
+  if (currentMillis - lastLoopCheckMillis >= 10000)
   {
     lastLoopCheckMillis = currentMillis;
 
     struct tm timeinfo;
-    if (!getLocalTime(&timeinfo))
-      return;
-
-    int minutes = timeinfo.tm_min;
-    int hours = timeinfo.tm_hour;
-
-    char timestampMsg[20];
-    snprintf(timestampMsg, 20, "%02d.%02d.%04d %02d:%02d:%02d", timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900,
-             hours, minutes, timeinfo.tm_sec);
-
-    log_i("Current time: %s", timestampMsg);
-
-    midNightReset(hours, minutes);
-
-    FeedingSettings *feedingSetting = CheckFeedingTime(feederSchedule, hours, minutes);
-    if (feedingSetting != nullptr)
+    if (getLocalTime(&timeinfo))
     {
-      log_i("Feeding time detected: %d portions at %02d:%02d for %d ms", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute, feedingSetting->duration);
-      startFeeding(feedingSetting->portions, feedingSetting->duration);
-    }
+      int minutes = timeinfo.tm_min;
+      int hours = timeinfo.tm_hour;
 
-    checkIfExistNewFirmware(hours, minutes);
+      char timestampMsg[20];
+      snprintf(timestampMsg, 20, "%02d.%02d.%04d %02d:%02d:%02d", timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year + 1900,
+               hours, minutes, timeinfo.tm_sec);
 
-    if (espMqtt.isMqttConnected())
-    {
-      publishWifiStatus(minutes, timestampMsg);
-      publishSensorData(minutes, timestampMsg);
+      log_i("Current time: %s", timestampMsg);
 
-      if (minutes == 0) // Every hour
+      if (previous_minutes != minutes)
       {
-        mqtt_publish_feeding_status(motor.isRunning());
+        previous_minutes = minutes;
+
+        mid_night_reset(hours, minutes);
+
+        FeedingSettings *feedingSetting = CheckFeedingTime(feederSchedule, hours, minutes);
+        if (feedingSetting != nullptr)
+        {
+          log_i("Feeding time detected: %d portions at %02d:%02d for %d ms", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute, feedingSetting->duration);
+          start_feeding(feedingSetting->portions, feedingSetting->duration);
+        }
+
+        checkIfExistNewFirmware(hours, minutes);
+
+        if (is_mqtt_connected)
+        {
+          publish_wifi_status(minutes, timestampMsg);
+          publish_sensor_data(minutes, timestampMsg);
+
+          if (minutes == 0) // Every hour
+          {
+            mqtt_publish_feeding_status(motor.isRunning());
+          }
+        }
       }
     }
+    else
+    {
+      log_w("Failed to obtain time from ESP32");
+    }
 
-    log_i("Wifi connected: %s", espMqtt.isWifiConnected() ? "Yes" : "No");
-    log_i("MQTT connected: %s", espMqtt.isMqttConnected() ? "Yes" : "No");
+    log_i("Wifi: %d, MQTT: %d", is_wifi_connected, is_mqtt_connected);
   }
 
   uint8_t buttState = ButtonFeed.read();
@@ -163,29 +189,23 @@ void loop()
   if (buttState == LOW)
   {
     log_i("Button pressed, starting feeding...");
-    startFeeding(1, FEEDING_DURATION); // Start feeding with 1 portion
+    start_feeding(1, FEEDING_DURATION); // Start feeding with 1 portion
   }
 
   vTaskDelay(100 / portTICK_PERIOD_MS); // Delay to avoid blocking the loop
   // This allows other tasks to run and prevents the loop from running too fast
 }
 
-void setupMqttAfterConnect()
+void mqtt_setup_after_connect()
 {
-  if (mqttSynced || !espMqtt.isMqttConnected())
-  {
-    return;
-  }
-
   log_i("MQTT connection established, setting up subscriptions...");
-  espMqtt.subscribe(mqtt_topic_cmnd);
-  espMqtt.subscribe(mqtt_topic_conf);
-  mqttSynced = true;
+  mqtt_subscribe(mqtt_topic_cmnd, 0);
+  mqtt_subscribe(mqtt_topic_conf, 0);
 }
 
-void syncWithNTP()
+void synchronize_clock_from_ntp()
 {
-  if (clockSynced || espMqtt.isWifiConnected() == false)
+  if (clockSynced || !is_wifi_connected)
   {
     return;
   }
@@ -202,7 +222,7 @@ void syncWithNTP()
   }
 }
 
-void mqttCallback(char *topic, byte *message, unsigned int length)
+void mqtt_message_handler(char *topic, byte *message, unsigned int length)
 {
   log_i("Message arrived on topic: %s", topic);
   String messageTemp;
@@ -234,7 +254,7 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     {
       int portions = messageTemp.substring(5).toInt();
       log_i("Received 'feed' command with %d portions", portions);
-      startFeeding(portions, FEEDING_DURATION); // Start feeding with specified portions
+      start_feeding(portions, FEEDING_DURATION); // Start feeding with specified portions
     }
     else
     {
@@ -252,11 +272,11 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
     {
       if (doc["feed01"].is<JsonObject>())
       {
-        FeedingSettings* feed01 = feederSchedule->feed01;
+        FeedingSettings *feed01 = feederSchedule->feed01;
         if (feed01 == nullptr)
         {
-            feed01 = new FeedingSettings();
-            feederSchedule->feed01 = feed01;
+          feed01 = new FeedingSettings();
+          feederSchedule->feed01 = feed01;
         }
 
         feed01->hour = doc["feed01"]["hour"] | feed01->hour;
@@ -270,11 +290,11 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
       }
       if (doc["feed02"].is<JsonObject>())
       {
-        FeedingSettings* feed02 = feederSchedule->feed02;
+        FeedingSettings *feed02 = feederSchedule->feed02;
         if (feed02 == nullptr)
         {
-            feed02 = new FeedingSettings();
-            feederSchedule->feed02 = feed02;
+          feed02 = new FeedingSettings();
+          feederSchedule->feed02 = feed02;
         }
 
         feed02->hour = doc["feed02"]["hour"] | feed02->hour;
@@ -297,7 +317,7 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
   log_i("MQTT message processing complete.");
 }
 
-void setupVariables()
+void setup_variables()
 {
   uint64_t chipid = ESP.getEfuseMac(); // The chip ID is essentially its MAC address(length: 6 bytes).
   uint32_t deviceId = 0;
@@ -317,7 +337,7 @@ void setupVariables()
   snprintf(DeviceName, sizeof(DeviceName), "feeder-%08X", deviceId);
 }
 
-void publishWifiStatus(int minutes, String timestampMsg)
+void publish_wifi_status(int minutes, String timestampMsg)
 {
   if ((minutes % 10 == 0))
   {
@@ -325,8 +345,10 @@ void publishWifiStatus(int minutes, String timestampMsg)
     doc["uptime"] = millis() / 1000;
     doc["time"] = timestampMsg;
 
-    espMqtt.addWifiInfo(doc); // Add WiFi info to the JSON document
-    espMqtt.publishJson(mqtt_topic_wifi, doc);
+    doc["wifi"]["name"] = DeviceName;
+
+    wifi_add_info(doc); // Add WiFi info to the JSON document
+    mqtt_publish_json(mqtt_topic_wifi, doc);
 
     doc.clear(); // Clear the document for the next use
 
@@ -348,25 +370,25 @@ void publishWifiStatus(int minutes, String timestampMsg)
     doc["feed02"]["portions"] = feed02->portions;
     doc["feed02"]["duration"] = feed02->duration;
 
-    //doc["chip"]["revision"] = ESP.getChipRevision();
-    //doc["chip"]["model"] = ESP.getChipModel();
-    //doc["chip"]["cores"] = ESP.getChipCores();
+    // doc["chip"]["revision"] = ESP.getChipRevision();
+    // doc["chip"]["model"] = ESP.getChipModel();
+    // doc["chip"]["cores"] = ESP.getChipCores();
 
-    //doc["heap"]["total"] = ESP.getHeapSize();
-    //doc["heap"]["free"] = ESP.getFreeHeap();
-    //doc["heap"]["minFree"] = ESP.getMinFreeHeap();
-    //doc["heap"]["maxAlloc"] = ESP.getMaxAllocHeap();
+    // doc["heap"]["total"] = ESP.getHeapSize();
+    // doc["heap"]["free"] = ESP.getFreeHeap();
+    // doc["heap"]["minFree"] = ESP.getMinFreeHeap();
+    // doc["heap"]["maxAlloc"] = ESP.getMaxAllocHeap();
 
-    //doc["psram"]["size"] = ESP.getPsramSize();
-    //doc["psram"]["available"] = ESP.getFreePsram();
-    //doc["psram"]["minFree"] = ESP.getMinFreePsram();
-    //doc["psram"]["maxAlloc"] = ESP.getMaxAllocPsram();
+    // doc["psram"]["size"] = ESP.getPsramSize();
+    // doc["psram"]["available"] = ESP.getFreePsram();
+    // doc["psram"]["minFree"] = ESP.getMinFreePsram();
+    // doc["psram"]["maxAlloc"] = ESP.getMaxAllocPsram();
 
-    espMqtt.publishJson(mqtt_topic_state, doc);
+    mqtt_publish_json(mqtt_topic_state, doc);
   }
 }
 
-void publishSensorData(int minutes, String timestampMsg)
+void publish_sensor_data(int minutes, String timestampMsg)
 {
   // Every 5 minutes, publish the status
   if ((minutes % 5 == 0))
@@ -385,13 +407,14 @@ void publishSensorData(int minutes, String timestampMsg)
       msg = "OK";
 
       // Cleanup old object before assigning new
-      if (feederSchedule->dht22Data != nullptr) {
+      if (feederSchedule->dht22Data != nullptr)
+      {
         delete feederSchedule->dht22Data;
       }
       feederSchedule->dht22Data = new TempAndHumidity(newValues);
     }
 
-    TempAndHumidity* dhtData = feederSchedule->dht22Data;
+    TempAndHumidity *dhtData = feederSchedule->dht22Data;
 
     JsonDocument doc;
     doc["uptime"] = millis() / 1000;
@@ -404,11 +427,11 @@ void publishSensorData(int minutes, String timestampMsg)
     // serializeJson(doc, Serial);
     // Serial.println();
 
-    espMqtt.publishJson(mqtt_topic_sensors, doc);
+    mqtt_publish_json(mqtt_topic_sensors, doc);
   }
 }
 
-void startFeeding(int8_t portions, unsigned long feedingTime)
+void start_feeding(int8_t portions, unsigned long feedingTime)
 {
   if (motor.isRunning() || portions <= 0)
   {
@@ -420,7 +443,7 @@ void startFeeding(int8_t portions, unsigned long feedingTime)
   motor.start(portions, feedingTime);
 }
 
-void midNightReset(int hours, int minutes)
+void mid_night_reset(int hours, int minutes)
 {
   if (hours != 0 || minutes != 0)
   {
@@ -436,7 +459,7 @@ void midNightReset(int hours, int minutes)
 
 void mqtt_publish_feeding_status(bool feeding)
 {
-  if (!espMqtt.isMqttConnected())
+  if (!is_mqtt_connected)
     return;
 
   char state[4];
@@ -454,18 +477,13 @@ void mqtt_publish_feeding_status(bool feeding)
     state[2] = 'F';
   }
 
-  espMqtt.publish(mqtt_topic_feed, state);
+  mqtt_publish(mqtt_topic_feed, state);
 }
 
 void checkIfExistNewFirmware(int hours, int minutes)
 {
-  //if (hours != 0 || !espMqtt.isWifiConnected())
-  if (!espMqtt.isWifiConnected())
-  {
-    return;
-  }
-
-  if (minutes % 10 != 0)
+  // if (hours != 0 || !espMqtt.isWifiConnected())
+  if (minutes % 10 != 0 || !is_wifi_connected)
   {
     return;
   }
