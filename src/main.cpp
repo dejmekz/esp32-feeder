@@ -41,8 +41,6 @@ MotorControl motor(MOTOR_PIN_1, MOTOR_PIN_2);
 MotorControl motor(SERVO_PIN);
 #endif
 
-WiFiClient wifiClient;
-
 DHTesp dht;
 LedPin LedRed(LED_RED_PIN, true);
 LedPin LedBlue(LED_BLUE_PIN, true);
@@ -132,7 +130,7 @@ void loop()
 
   unsigned long currentMillis = millis();
 
-  // 30s interval check
+  // 10s interval check
   if (currentMillis - lastLoopCheckMillis >= 10000)
   {
     lastLoopCheckMillis = currentMillis;
