@@ -19,7 +19,7 @@ FeederSettings feederSchedule = {
     {FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_DURATION, true},
     {0.0, 0.0}};
 
-char DeviceName[16]; // 15 + 1 - delka řetězce + 1 :)
+char device_name[16]; // 15 + 1 - delka řetězce + 1 :)
 char mqtt_topic_sensors[31];
 char mqtt_topic_will[27];
 char mqtt_topic_cmnd[28];
@@ -49,9 +49,6 @@ Button ButtonFeed(BUTTON_PIN, 100);
 bool clockSynced = false;
 unsigned long lastLoopCheckMillis = 0;
 
-// Ensure webserver_start is declared as a function
-extern void webserver_start(FeederSettings &settings);
-
 void mqtt_message_handler(char *topic, byte *message, unsigned int length);
 void mqtt_setup_after_connect();
 void synchronize_clock_from_ntp();
@@ -68,8 +65,10 @@ void mqtt_publish_feeding_status(bool feeding);
 
 void setup()
 {
-  wifi_init(DeviceName, WIFI_SSID, WIFI_PASSWORD);
-  mqtt_init(DeviceName, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, mqtt_topic_will);
+  setup_variables();
+
+  wifi_init(device_name, WIFI_SSID, WIFI_PASSWORD);
+  mqtt_init(device_name, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, mqtt_topic_will);
   mqtt_set_callback(mqtt_message_handler, mqtt_setup_after_connect);
 
   esp32_FOTA.setManifestURL(FOTA_MANIFEST_URL);
@@ -81,7 +80,6 @@ void setup()
   LedBlue.off();
   LedRed.off();
 
-  setup_variables();
   // Serial.begin(115200);
   log_i("Starting Feeder...");
   dht.setup(DHT22_PIN, DHTesp::DHT22);
@@ -105,9 +103,7 @@ void loop()
     is_mqtt_connected = false;
   }
 
-  motor.loop();
-
-  synchronize_clock_from_ntp();
+  motor.loop();  
 
   if (motor.isRunning())
   {
@@ -131,6 +127,8 @@ void loop()
   if (currentMillis - lastLoopCheckMillis >= 10000)
   {
     lastLoopCheckMillis = currentMillis;
+
+    synchronize_clock_from_ntp();
 
     struct tm timeinfo;
     if (getLocalTime(&timeinfo))
@@ -221,6 +219,7 @@ void mqtt_message_handler(char *topic, byte *message, unsigned int length)
 {
   log_i("Message arrived on topic: %s", topic);
   String messageTemp;
+  messageTemp.reserve(length);
   for (int i = 0; i < length; i++)
   {
     messageTemp += (char)message[i];
@@ -265,29 +264,68 @@ void mqtt_message_handler(char *topic, byte *message, unsigned int length)
     DeserializationError error = deserializeJson(doc, messageTemp);
     if (!error)
     {
+      bool configUpdated = false;
+
       if (doc["feed01"].is<JsonObject>())
       {
-        feederSchedule.feed01.hour = doc["feed01"]["hour"] | feederSchedule.feed01.hour;
-        feederSchedule.feed01.minute = doc["feed01"]["minute"] | feederSchedule.feed01.minute;
-        feederSchedule.feed01.portions = doc["feed01"]["portions"] | feederSchedule.feed01.portions;
-        feederSchedule.feed01.enabled = true; // Default to true if not specified
+        int hour = doc["feed01"]["hour"] | feederSchedule.feed01.hour;
+        int minute = doc["feed01"]["minute"] | feederSchedule.feed01.minute;
+        int8_t portions = doc["feed01"]["portions"] | feederSchedule.feed01.portions;
+
+        // Validate values
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && portions >= 1 && portions <= 10)
+        {
+          feederSchedule.feed01.hour = hour;
+          feederSchedule.feed01.minute = minute;
+          feederSchedule.feed01.portions = portions;
+          feederSchedule.feed01.enabled = true;
+          configUpdated = true;
+          log_i("feed01 updated: %02d:%02d, %d portions", hour, minute, portions);
+        }
+        else
+        {
+          log_e("feed01 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
+        }
       }
       else
       {
         log_w("No feed01 configuration found in JSON.");
       }
+
       if (doc["feed02"].is<JsonObject>())
       {
-        feederSchedule.feed02.hour = doc["feed02"]["hour"] | feederSchedule.feed02.hour;
-        feederSchedule.feed02.minute = doc["feed02"]["minute"] | feederSchedule.feed02.minute;
-        feederSchedule.feed02.portions = doc["feed02"]["portions"] | feederSchedule.feed02.portions;
-        feederSchedule.feed02.enabled = true; // Default to true if not specified
+        int hour = doc["feed02"]["hour"] | feederSchedule.feed02.hour;
+        int minute = doc["feed02"]["minute"] | feederSchedule.feed02.minute;
+        int8_t portions = doc["feed02"]["portions"] | feederSchedule.feed02.portions;
+
+        // Validate values
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && portions >= 1 && portions <= 10)
+        {
+          feederSchedule.feed02.hour = hour;
+          feederSchedule.feed02.minute = minute;
+          feederSchedule.feed02.portions = portions;
+          feederSchedule.feed02.enabled = true;
+          configUpdated = true;
+          log_i("feed02 updated: %02d:%02d, %d portions", hour, minute, portions);
+        }
+        else
+        {
+          log_e("feed02 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
+        }
       }
       else
       {
         log_w("No feed02 configuration found in JSON.");
       }
-      log_i("Feeder schedule updated from JSON config.");
+
+      if (configUpdated)
+      {
+        log_i("Feeder schedule updated from JSON config.");
+      }
+      else
+      {
+        log_w("No valid configuration updates applied.");
+      }
     }
     else
     {
@@ -307,15 +345,56 @@ void setup_variables()
     deviceId |= ((chipid >> (40 - i)) & 0xff) << i;
   }
 
-  snprintf(DeviceName, sizeof(DeviceName), "feeder_%08X", deviceId);
-  snprintf(mqtt_topic_sensors, sizeof(mqtt_topic_sensors), "feeder/%s/sensors", DeviceName);
-  snprintf(mqtt_topic_will, sizeof(mqtt_topic_will), "feeder/%s/LWT", DeviceName);
-  snprintf(mqtt_topic_cmnd, sizeof(mqtt_topic_cmnd), "feeder/%s/cmnd", DeviceName);
-  snprintf(mqtt_topic_conf, sizeof(mqtt_topic_conf), "feeder/%s/conf", DeviceName);
-  snprintf(mqtt_topic_feed, sizeof(mqtt_topic_feed), "feeder/%s/feed", DeviceName);
-  snprintf(mqtt_topic_wifi, sizeof(mqtt_topic_wifi), "feeder/%s/wifi", DeviceName);
-  snprintf(mqtt_topic_state, sizeof(mqtt_topic_state), "feeder/%s/state", DeviceName);
-  snprintf(DeviceName, sizeof(DeviceName), "feeder-%08X", deviceId);
+  int written = snprintf(device_name, sizeof(device_name), "feeder-%08X", deviceId);
+  if (written >= sizeof(device_name))
+  {
+    log_e("device_name buffer overflow! Required: %d, Available: %d", written + 1, sizeof(device_name));
+  }
+
+  // Build MQTT topics with overflow checking
+  written = snprintf(mqtt_topic_sensors, sizeof(mqtt_topic_sensors), "feeder/%s/sensors", device_name);
+  if (written >= sizeof(mqtt_topic_sensors))
+  {
+    log_e("mqtt_topic_sensors overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_sensors));
+  }
+
+  written = snprintf(mqtt_topic_will, sizeof(mqtt_topic_will), "feeder/%s/LWT", device_name);
+  if (written >= sizeof(mqtt_topic_will))
+  {
+    log_e("mqtt_topic_will overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_will));
+  }
+
+  written = snprintf(mqtt_topic_cmnd, sizeof(mqtt_topic_cmnd), "feeder/%s/cmnd", device_name);
+  if (written >= sizeof(mqtt_topic_cmnd))
+  {
+    log_e("mqtt_topic_cmnd overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_cmnd));
+  }
+
+  written = snprintf(mqtt_topic_conf, sizeof(mqtt_topic_conf), "feeder/%s/conf", device_name);
+  if (written >= sizeof(mqtt_topic_conf))
+  {
+    log_e("mqtt_topic_conf overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_conf));
+  }
+
+  written = snprintf(mqtt_topic_feed, sizeof(mqtt_topic_feed), "feeder/%s/feed", device_name);
+  if (written >= sizeof(mqtt_topic_feed))
+  {
+    log_e("mqtt_topic_feed overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_feed));
+  }
+
+  written = snprintf(mqtt_topic_wifi, sizeof(mqtt_topic_wifi), "feeder/%s/wifi", device_name);
+  if (written >= sizeof(mqtt_topic_wifi))
+  {
+    log_e("mqtt_topic_wifi overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_wifi));
+  }
+
+  written = snprintf(mqtt_topic_state, sizeof(mqtt_topic_state), "feeder/%s/state", device_name);
+  if (written >= sizeof(mqtt_topic_state))
+  {
+    log_e("mqtt_topic_state overflow! Required: %d, Available: %d", written + 1, sizeof(mqtt_topic_state));
+  }
+
+  log_i("Device name: %s", device_name);
 }
 
 void publish_wifi_status(int minutes, String timestampMsg)
@@ -326,7 +405,7 @@ void publish_wifi_status(int minutes, String timestampMsg)
     doc["uptime"] = millis() / 1000;
     doc["time"] = timestampMsg;
 
-    doc["wifi"]["name"] = DeviceName;
+    doc["wifi"]["name"] = device_name;
 
     wifi_add_info(doc); // Add WiFi info to the JSON document
     mqtt_publish_json(mqtt_topic_wifi, doc);
@@ -334,7 +413,7 @@ void publish_wifi_status(int minutes, String timestampMsg)
     doc.clear(); // Clear the document for the next use
 
     doc["time"] = timestampMsg;
-    doc["name"] = DeviceName;
+    doc["name"] = device_name;
     doc["firmware"] = FIRMWARE_VERSION;
     doc["type"] = FOTA_FIRMWARE_TYPE;
 
@@ -432,21 +511,7 @@ void mqtt_publish_feeding_status(bool feeding)
   if (!is_mqtt_connected)
     return;
 
-  char state[4];
-  state[0] = 'O';
-  state[3] = '\0';
-
-  if (feeding)
-  {
-    state[1] = 'N';
-    state[2] = '\0';
-  }
-  else
-  {
-    state[1] = 'F';
-    state[2] = 'F';
-  }
-
+  const char* state = feeding ? "ON" : "OFF";
   mqtt_publish(mqtt_topic_feed, state);
 }
 

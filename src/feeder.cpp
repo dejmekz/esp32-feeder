@@ -13,17 +13,19 @@ int8_t CheckIfFeedingTime(FeedingSettings* setting, int hours, int minutes)
 
 FeedingSettings* CheckFeedingTime(FeederSettings* schedule, int hours, int minutes)
 {
-    if (CheckIfFeedingTime(&schedule->feed01, hours, minutes) > 0)
+    int8_t portions = CheckIfFeedingTime(&schedule->feed01, hours, minutes);
+    if (portions > 0)
     {
         return &schedule->feed01;
     }
 
-    if (CheckIfFeedingTime(&schedule->feed02, hours, minutes) > 0)
+    portions = CheckIfFeedingTime(&schedule->feed02, hours, minutes);
+    if (portions > 0)
     {
         return &schedule->feed02;
     }
 
-    return nullptr; // No feeding scheduled
+    return nullptr;
 }
 
 void setFeeder01Schedule(FeederSettings* schedule, int hour, int minute, int8_t portions, bool enabled)
