@@ -1,4 +1,4 @@
-
+#include <esp_task_wdt.h>
 #include <Arduino.h>
 #include <esp32-hal-log.h>
 #include <esp32fota.h>
@@ -65,6 +65,9 @@ void mqtt_publish_feeding_status(bool feeding);
 
 void setup()
 {
+  esp_task_wdt_init(30, true); // 30 second timeout
+  esp_task_wdt_add(NULL);  
+  
   setup_variables();
 
   wifi_init(device_name, WIFI_SSID, WIFI_PASSWORD);
@@ -90,6 +93,8 @@ void setup()
 
 void loop()
 {
+  esp_task_wdt_reset();
+
   webserver.handleClient();
   LedRed.blink();
   is_wifi_connected = wifi_loop();
@@ -247,8 +252,12 @@ void mqtt_message_handler(char *topic, byte *message, unsigned int length)
     else if (messageTemp.startsWith("feed "))
     {
       int portions = messageTemp.substring(5).toInt();
-      log_i("Received 'feed' command with %d portions", portions);
-      start_feeding(portions, FEEDING_DURATION); // Start feeding with specified portions
+      if (portions >= 1 && portions <= 10) {
+        log_i("Received 'feed' command with %d portions", portions);
+        start_feeding(portions, FEEDING_DURATION);
+      } else {
+        log_e("Invalid portions value: %d (must be 1-10)", portions);
+      }
     }
     else
     {

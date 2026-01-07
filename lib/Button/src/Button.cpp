@@ -42,25 +42,30 @@ uint8_t Button::read()
 {
   unsigned long currentMillis = millis();
   uint8_t reading = digitalRead(_pin);
-  if (_lastState == HIGH && reading == LOW)
+
+  // If the button state has changed (noise or actual press)
+  if (reading != _lastState)
   {
-    _lastState = LOW;
-    _lastTime = millis();
+    _lastTime = currentMillis; // Reset the debounce timer
+    _lastState = reading;      // Update the last reading
   }
 
-  if (_lastState == reading)
+  // If enough time has passed and the state is stable
+  if ((currentMillis - _lastTime) > _delay)
   {
-    if ((currentMillis - _lastTime) > _delay)
+    // If the stable state is different from our current state
+    if (reading != _state)
     {
-      _state = HIGH;
+      _state = reading;
+
+      // Return LOW only once when button is pressed (falling edge)
+      if (_state == LOW)
+      {
+        return LOW;
+      }
     }
   }
-  else
-  {
-    _lastState = HIGH;
-    _state = LOW;
-  }
 
-  // save the reading. Next time through the loop, it'll be the _lastState:
-  return _state;
+  // Return HIGH if not pressed or already processed
+  return HIGH;
 }
