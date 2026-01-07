@@ -50,23 +50,19 @@ static void updateUI()
 
     if (feederSettings != nullptr)
     {
-        FeedingSettings *feed01 = feederSettings->feed01;
-        FeedingSettings *feed02 = feederSettings->feed02;
-
         char temp[6];
-        snprintf(temp, 6, "%02d:%02d", feed01->hour, feed01->minute);
+        snprintf(temp, 6, "%02d:%02d", feederSettings->feed01.hour, feederSettings->feed01.minute);
         doc["time01"] = String(temp);
-        doc["por01"] = feed01->portions;
-        doc["dur01"] = feed01->duration;
+        doc["por01"] = feederSettings->feed01.portions;
+        doc["dur01"] = feederSettings->feed01.duration;
 
-        snprintf(temp, 6, "%02d:%02d", feed02->hour, feed02->minute);
+        snprintf(temp, 6, "%02d:%02d", feederSettings->feed02.hour, feederSettings->feed02.minute);
         doc["time02"] = String(temp);
-        doc["por02"] = feed02->portions;
-        doc["dur02"] = feed02->duration;
+        doc["por02"] = feederSettings->feed02.portions;
+        doc["dur02"] = feederSettings->feed02.duration;
 
-        TempAndHumidity *th = feederSettings->dht22Data;
-        doc["temp"] = th->temperature;
-        doc["hum"] = th->humidity;
+        doc["temp"] = feederSettings->dht22Data.temperature;
+        doc["hum"] = feederSettings->dht22Data.humidity;
     }
 
     doc["runtime"] = get_formated_actual_millis();
@@ -134,31 +130,28 @@ void webserver_start(FeederSettings *setting)
 
         log_i("Saving settings...");
         String buf;
-        
-        FeedingSettings* feed01 = feederSettings->feed01;
-        FeedingSettings* feed02 = feederSettings->feed02;
 
-        feed01->hour = webserver.arg("h01").toInt();
-        feed01->minute = webserver.arg("m01").toInt();
-        feed01->portions = webserver.arg("p01").toInt();
-        feed02->enabled = true; // always enabled
+        feederSettings->feed01.hour = webserver.arg("h01").toInt();
+        feederSettings->feed01.minute = webserver.arg("m01").toInt();
+        feederSettings->feed01.portions = webserver.arg("p01").toInt();
+        feederSettings->feed01.enabled = true; // always enabled
 
-        feed02->hour = webserver.arg("h02").toInt();
-        feed02->minute = webserver.arg("m02").toInt();
-        feed02->portions = webserver.arg("p02").toInt();
-        feed02->enabled = true; // always enabled
+        feederSettings->feed02.hour = webserver.arg("h02").toInt();
+        feederSettings->feed02.minute = webserver.arg("m02").toInt();
+        feederSettings->feed02.portions = webserver.arg("p02").toInt();
+        feederSettings->feed02.enabled = true; // always enabled
 
         // validate feeding times
-        if (feed01->hour < 0 || feed01->hour > 23 || feed01->minute < 0 || feed01->minute > 59 ||
-            feed02->hour < 0 || feed02->hour > 23 || feed02->minute < 0 || feed02->minute > 59 ||
-            feed01->portions < 0 || feed01->portions > 10 || feed02->portions < 0 || feed02->portions > 10)
+        if (feederSettings->feed01.hour < 0 || feederSettings->feed01.hour > 23 || feederSettings->feed01.minute < 0 || feederSettings->feed01.minute > 59 ||
+            feederSettings->feed02.hour < 0 || feederSettings->feed02.hour > 23 || feederSettings->feed02.minute < 0 || feederSettings->feed02.minute > 59 ||
+            feederSettings->feed01.portions < 0 || feederSettings->feed01.portions > 10 || feederSettings->feed02.portions < 0 || feederSettings->feed02.portions > 10)
         {
             webserver.send(400, "text/plain", "Invalid feeding time or portions");
             return;
         }
 
-        log_i("Feeder 1: %02d:%02d, portions: %d", feed01->hour, feed01->minute, feed01->portions);
-        log_i("Feeder 2: %02d:%02d, portions: %d", feed02->hour, feed02->minute, feed02->portions);
+        log_i("Feeder 1: %02d:%02d, portions: %d", feederSettings->feed01.hour, feederSettings->feed01.minute, feederSettings->feed01.portions);
+        log_i("Feeder 2: %02d:%02d, portions: %d", feederSettings->feed02.hour, feederSettings->feed02.minute, feederSettings->feed02.portions);
 
         webserver.sendHeader("Location", "/config?saved=1", true);
         webserver.send(302, "text/plain", ""); });

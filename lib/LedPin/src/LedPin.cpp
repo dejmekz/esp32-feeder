@@ -15,9 +15,7 @@
  * 
  * @param pin 
  */
-LedPin::LedPin(uint8_t pin) {
-  LedPin(pin, false);
-}
+LedPin::LedPin(uint8_t pin) : LedPin(pin, false) {}
 
 /**
  * @brief Construct a new Led:: Led object

@@ -78,12 +78,35 @@ bool mqtt_is_connected()
 bool mqtt_publish_json(const char* topic, JsonDocument& doc) {
     char buffer[512];
     size_t len = serializeJson(doc, buffer);
-    return _mqttClient.publish(topic, buffer, len);
+
+    // Check if JSON was truncated (buffer too small)
+    if (len >= sizeof(buffer)) {
+        log_e("MQTT JSON message too large (%d bytes), truncated to %d bytes for topic: %s", len, sizeof(buffer), topic);
+        // Still try to publish the truncated message, but it may be invalid JSON
+    }
+
+    // Check if serialization succeeded
+    if (len == 0) {
+        log_e("MQTT JSON serialization failed for topic: %s", topic);
+        return false;
+    }
+
+    // Attempt to publish and log result
+    bool result = _mqttClient.publish(topic, buffer, len);
+    if (!result) {
+        log_e("MQTT publish failed for topic: %s (message size: %d bytes)", topic, len);
+    }
+
+    return result;
 }
 
 bool mqtt_publish(const char *topic, const char *payload)
 {
-    return _mqttClient.publish(topic, payload);
+    bool result = _mqttClient.publish(topic, payload);
+    if (!result) {
+        log_e("MQTT publish failed for topic: %s", topic);
+    }
+    return result;
 }
 
 void mqtt_subscribe(const char* topic, uint8_t qos) {

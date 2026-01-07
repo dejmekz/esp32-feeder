@@ -15,10 +15,10 @@ struct FeedingSettings
 
 struct FeederSettings
 {
-  FeedingSettings* feed01;
-  FeedingSettings* feed02;
+  FeedingSettings feed01;
+  FeedingSettings feed02;
 
-  TempAndHumidity* dht22Data;
+  TempAndHumidity dht22Data;
 };
 
 FeedingSettings* CheckFeedingTime(FeederSettings* schedule, int hours, int minutes);
