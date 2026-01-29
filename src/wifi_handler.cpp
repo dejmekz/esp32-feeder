@@ -1,6 +1,10 @@
 #include "wifi_handler.h"
 #include <WiFi.h>
 #include <esp32-hal-log.h>
+#include "config.h"
+
+// External flag from main.cpp - reset on disconnect to force NTP resync
+extern bool clockSynced;
 
 static const char *_wifi_ssid = nullptr;
 static const char *_wifi_password = nullptr;
@@ -13,8 +17,9 @@ void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info){
 }
 
 void WiFiDisconnected(WiFiEvent_t event, WiFiEventInfo_t info){
-    log_d("WiFi lost connection. Reason: %d",info.wifi_sta_disconnected.reason);
+    log_d("WiFi lost connection. Reason: %d", info.wifi_sta_disconnected.reason);
     wifiConnected = false;
+    clockSynced = false;  // Force NTP resync on reconnect
 }
 
 void wifi_init(const char *device_name, const char *ssid, const char *password)
@@ -47,10 +52,10 @@ bool wifi_loop()
     bool isConnected = WiFi.status() == WL_CONNECTED;
     if (!isConnected)
     {
-        log_d("WiFi not connected - status: %d", WiFi.status());
+        log_v("WiFi not connected - status: %d", WiFi.status());  // Changed to verbose level
         unsigned long currentTime = millis();
-        if (currentTime - lastWifiAttemptTime >= 60000)
-        { // Attempt to reconnect every 60 seconds
+        if (currentTime - lastWifiAttemptTime >= WIFI_RECONNECT_INTERVAL_MS)
+        {
             lastWifiAttemptTime = currentTime;
             log_i("Reconnecting to WiFi...");
             wifi_connect(false);

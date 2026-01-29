@@ -17,5 +17,6 @@ bool mqtt_publish(const char *topic, const char *payload);
 
 void mqtt_set_callback(MQTT_CALLBACK_SIGNATURE, SimpleAction callbackConnected);
 void mqtt_subscribe(const char* topic, uint8_t qos);
+void mqtt_disconnect();
 
 #endif

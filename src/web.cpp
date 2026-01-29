@@ -2,7 +2,12 @@
 #include "config.h"
 #include "html.h"
 #include "utils.h"
+#include "nvs_storage.h"
 #include <esp32-hal-log.h>
+#include <freertos/semphr.h>
+
+// External mutex from main.cpp for thread-safe feederSettings access
+extern SemaphoreHandle_t scheduleMutex;
 
 static uint32_t webserverRequestMillis = 0;
 static uint16_t webserverTimeout = 0;
@@ -48,21 +53,25 @@ static void updateUI()
         doc["date"] = "01.01.1970";
     }
 
-    if (feederSettings != nullptr)
+    // Read feeder settings with mutex protection
+    if (feederSettings != nullptr && scheduleMutex != NULL)
     {
-        char temp[6];
-        snprintf(temp, 6, "%02d:%02d", feederSettings->feed01.hour, feederSettings->feed01.minute);
-        doc["time01"] = String(temp);
-        doc["por01"] = feederSettings->feed01.portions;
-        doc["dur01"] = feederSettings->feed01.duration;
+        if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            char temp[6];
+            snprintf(temp, 6, "%02d:%02d", feederSettings->feed01.hour, feederSettings->feed01.minute);
+            doc["time01"] = String(temp);
+            doc["por01"] = feederSettings->feed01.portions;
+            doc["dur01"] = feederSettings->feed01.duration;
 
-        snprintf(temp, 6, "%02d:%02d", feederSettings->feed02.hour, feederSettings->feed02.minute);
-        doc["time02"] = String(temp);
-        doc["por02"] = feederSettings->feed02.portions;
-        doc["dur02"] = feederSettings->feed02.duration;
+            snprintf(temp, 6, "%02d:%02d", feederSettings->feed02.hour, feederSettings->feed02.minute);
+            doc["time02"] = String(temp);
+            doc["por02"] = feederSettings->feed02.portions;
+            doc["dur02"] = feederSettings->feed02.duration;
 
-        doc["temp"] = feederSettings->dht22Data.temperature;
-        doc["hum"] = feederSettings->dht22Data.humidity;
+            doc["temp"] = feederSettings->dht22Data.temperature;
+            doc["hum"] = feederSettings->dht22Data.humidity;
+            xSemaphoreGive(scheduleMutex);
+        }
     }
 
     doc["runtime"] = get_formated_actual_millis();
@@ -127,31 +136,48 @@ void webserver_start(FeederSettings *setting)
     // save main settings to NVS
     webserver.on("/config", HTTP_POST, []()
                  {
+        log_i("Saving settings from web...");
 
-        log_i("Saving settings...");
-        String buf;
+        // Parse values first (before taking mutex)
+        int h1 = webserver.arg("h01").toInt();
+        int m1 = webserver.arg("m01").toInt();
+        int8_t p1 = webserver.arg("p01").toInt();
+        int h2 = webserver.arg("h02").toInt();
+        int m2 = webserver.arg("m02").toInt();
+        int8_t p2 = webserver.arg("p02").toInt();
 
-        feederSettings->feed01.hour = webserver.arg("h01").toInt();
-        feederSettings->feed01.minute = webserver.arg("m01").toInt();
-        feederSettings->feed01.portions = webserver.arg("p01").toInt();
-        feederSettings->feed01.enabled = true; // always enabled
-
-        feederSettings->feed02.hour = webserver.arg("h02").toInt();
-        feederSettings->feed02.minute = webserver.arg("m02").toInt();
-        feederSettings->feed02.portions = webserver.arg("p02").toInt();
-        feederSettings->feed02.enabled = true; // always enabled
-
-        // validate feeding times
-        if (feederSettings->feed01.hour < 0 || feederSettings->feed01.hour > 23 || feederSettings->feed01.minute < 0 || feederSettings->feed01.minute > 59 ||
-            feederSettings->feed02.hour < 0 || feederSettings->feed02.hour > 23 || feederSettings->feed02.minute < 0 || feederSettings->feed02.minute > 59 ||
-            feederSettings->feed01.portions < 0 || feederSettings->feed01.portions > 10 || feederSettings->feed02.portions < 0 || feederSettings->feed02.portions > 10)
+        // Validate feeding times
+        if (h1 < 0 || h1 > 23 || m1 < 0 || m1 > 59 ||
+            h2 < 0 || h2 > 23 || m2 < 0 || m2 > 59 ||
+            p1 < 1 || p1 > MAX_PORTIONS || p2 < 1 || p2 > MAX_PORTIONS)
         {
             webserver.send(400, "text/plain", "Invalid feeding time or portions");
             return;
         }
 
-        log_i("Feeder 1: %02d:%02d, portions: %d", feederSettings->feed01.hour, feederSettings->feed01.minute, feederSettings->feed01.portions);
-        log_i("Feeder 2: %02d:%02d, portions: %d", feederSettings->feed02.hour, feederSettings->feed02.minute, feederSettings->feed02.portions);
+        // Update with mutex protection
+        if (scheduleMutex != NULL && xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            feederSettings->feed01.hour = h1;
+            feederSettings->feed01.minute = m1;
+            feederSettings->feed01.portions = p1;
+            feederSettings->feed01.enabled = true;
+
+            feederSettings->feed02.hour = h2;
+            feederSettings->feed02.minute = m2;
+            feederSettings->feed02.portions = p2;
+            feederSettings->feed02.enabled = true;
+
+            // Save to NVS for persistence
+            nvs_save_feeder_config(feederSettings);
+
+            xSemaphoreGive(scheduleMutex);
+        } else {
+            webserver.send(500, "text/plain", "Failed to acquire lock");
+            return;
+        }
+
+        log_i("Feeder 1: %02d:%02d, portions: %d", h1, m1, p1);
+        log_i("Feeder 2: %02d:%02d, portions: %d", h2, m2, p2);
 
         webserver.sendHeader("Location", "/config?saved=1", true);
         webserver.send(302, "text/plain", ""); });

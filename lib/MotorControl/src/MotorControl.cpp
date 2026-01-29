@@ -130,6 +130,7 @@ void MotorControl::loop()
     }
     else if (_step == 3 && delayMillis >= _feedingTime)
     {
+        _lastMillis = currentMillis;  // Reset timer for step 4
         move(MOTOR_STOP);
         _step++;
     }

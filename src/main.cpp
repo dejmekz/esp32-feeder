@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <esp32-hal-log.h>
 #include <esp32fota.h>
+#include <freertos/semphr.h>
 
 #include "DHTesp.h"
 
@@ -13,11 +14,15 @@
 #include "web.h"
 #include "feeder.h"
 #include "Button.h"
+#include "nvs_storage.h"
 
 FeederSettings feederSchedule = {
     {FEEDING_HOUR_01, FEEDING_MINUTE_01, FEEDING_PORTIONS_01, FEEDING_DURATION, true},
     {FEEDING_HOUR_02, FEEDING_MINUTE_02, FEEDING_PORTIONS_02, FEEDING_DURATION, true},
     {0.0, 0.0}};
+
+// Mutex for thread-safe access to feederSchedule
+SemaphoreHandle_t scheduleMutex = NULL;
 
 char device_name[16]; // 15 + 1 - delka řetězce + 1 :)
 char mqtt_topic_sensors[31];
@@ -50,9 +55,12 @@ bool clockSynced = false;
 unsigned long lastLoopCheckMillis = 0;
 
 void mqtt_message_handler(char *topic, byte *message, unsigned int length);
+void mqtt_handle_command(const String& message);
+void mqtt_handle_config(const String& message);
 void mqtt_setup_after_connect();
 void synchronize_clock_from_ntp();
 void setup_variables();
+bool validateFeedingConfig(int hour, int minute, int8_t portions);
 
 void publish_wifi_status(int minutes, String timestampMsg);
 void publish_sensor_data(int minutes, String timestampMsg);
@@ -66,9 +74,22 @@ void mqtt_publish_feeding_status(bool feeding);
 void setup()
 {
   esp_task_wdt_init(30, true); // 30 second timeout
-  esp_task_wdt_add(NULL);  
-  
+  esp_task_wdt_add(NULL);
+
+  // Initialize mutex for thread-safe schedule access
+  scheduleMutex = xSemaphoreCreateMutex();
+  if (scheduleMutex == NULL) {
+    log_e("Failed to create mutex!");
+  }
+
   setup_variables();
+
+  // Initialize NVS and load saved configuration
+  nvs_init();
+  if (xSemaphoreTake(scheduleMutex, portMAX_DELAY) == pdTRUE) {
+    nvs_load_feeder_config(&feederSchedule);
+    xSemaphoreGive(scheduleMutex);
+  }
 
   wifi_init(device_name, WIFI_SSID, WIFI_PASSWORD);
   mqtt_init(device_name, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, mqtt_topic_will);
@@ -128,8 +149,8 @@ void loop()
 
   unsigned long currentMillis = millis();
 
-  // 10s interval check
-  if (currentMillis - lastLoopCheckMillis >= 10000)
+  // Periodic check interval
+  if (currentMillis - lastLoopCheckMillis >= LOOP_CHECK_INTERVAL_MS)
   {
     lastLoopCheckMillis = currentMillis;
 
@@ -184,7 +205,7 @@ void loop()
 
   uint8_t buttState = ButtonFeed.read();
 
-  if (buttState == LOW)
+  if (buttState == LOW && !motor.isRunning())
   {
     log_i("Button pressed, starting feeding...");
     start_feeding(1, FEEDING_DURATION); // Start feeding with 1 portion
@@ -208,8 +229,7 @@ void synchronize_clock_from_ntp()
     return;
   }
 
-  configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", NTP_SERVER);
-  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", NTP_SERVER, NTP_FALLBACK_SERVER);
 
   struct tm timeinfo;
   if (getLocalTime(&timeinfo))
@@ -220,126 +240,147 @@ void synchronize_clock_from_ntp()
   }
 }
 
+// Validate feeding configuration values
+bool validateFeedingConfig(int hour, int minute, int8_t portions)
+{
+  return hour >= 0 && hour <= 23 &&
+         minute >= 0 && minute <= 59 &&
+         portions >= 1 && portions <= MAX_PORTIONS;
+}
+
+// Handle MQTT command messages (cmnd topic)
+void mqtt_handle_command(const String& message)
+{
+  String cmd = message;
+  cmd.toLowerCase();
+
+  if (cmd == "on")
+  {
+    log_i("Received 'on' command");
+    motor.start(1, FEEDING_DURATION);
+  }
+  else if (cmd == "off")
+  {
+    log_i("Received 'off' command");
+    motor.stop();
+  }
+  else if (cmd.startsWith("feed "))
+  {
+    int portions = cmd.substring(5).toInt();
+    if (portions >= 1 && portions <= MAX_PORTIONS) {
+      log_i("Received 'feed' command with %d portions", portions);
+      start_feeding(portions, FEEDING_DURATION);
+    } else {
+      log_e("Invalid portions value: %d (must be 1-%d)", portions, MAX_PORTIONS);
+    }
+  }
+  else
+  {
+    log_e("Unknown command received: %s", cmd.c_str());
+  }
+}
+
+// Handle MQTT configuration messages (conf topic)
+void mqtt_handle_config(const String& message)
+{
+  log_i("Processing config update");
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, message);
+  if (error)
+  {
+    log_e("JSON parse error: %s", error.c_str());
+    return;
+  }
+
+  bool configUpdated = false;
+
+  if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    log_e("Failed to acquire mutex for config update");
+    return;
+  }
+
+  if (doc["feed01"].is<JsonObject>())
+  {
+    int hour = doc["feed01"]["hour"] | feederSchedule.feed01.hour;
+    int minute = doc["feed01"]["minute"] | feederSchedule.feed01.minute;
+    int8_t portions = doc["feed01"]["portions"] | feederSchedule.feed01.portions;
+
+    if (validateFeedingConfig(hour, minute, portions))
+    {
+      feederSchedule.feed01.hour = hour;
+      feederSchedule.feed01.minute = minute;
+      feederSchedule.feed01.portions = portions;
+      feederSchedule.feed01.enabled = true;
+      configUpdated = true;
+      log_i("feed01 updated: %02d:%02d, %d portions", hour, minute, portions);
+    }
+    else
+    {
+      log_e("feed01 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
+    }
+  }
+
+  if (doc["feed02"].is<JsonObject>())
+  {
+    int hour = doc["feed02"]["hour"] | feederSchedule.feed02.hour;
+    int minute = doc["feed02"]["minute"] | feederSchedule.feed02.minute;
+    int8_t portions = doc["feed02"]["portions"] | feederSchedule.feed02.portions;
+
+    if (validateFeedingConfig(hour, minute, portions))
+    {
+      feederSchedule.feed02.hour = hour;
+      feederSchedule.feed02.minute = minute;
+      feederSchedule.feed02.portions = portions;
+      feederSchedule.feed02.enabled = true;
+      configUpdated = true;
+      log_i("feed02 updated: %02d:%02d, %d portions", hour, minute, portions);
+    }
+    else
+    {
+      log_e("feed02 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
+    }
+  }
+
+  if (configUpdated)
+  {
+    nvs_save_feeder_config(&feederSchedule);
+    log_i("Feeder schedule updated and saved to NVS");
+  }
+  else
+  {
+    log_w("No valid configuration updates applied.");
+  }
+
+  xSemaphoreGive(scheduleMutex);
+}
+
 void mqtt_message_handler(char *topic, byte *message, unsigned int length)
 {
-  log_i("Message arrived on topic: %s", topic);
+  log_i("Message arrived on topic: %s, length: %d", topic, length);
+
+  // Protect against oversized messages
+  if (length > MAX_MQTT_MESSAGE_SIZE) {
+    log_e("MQTT message too large: %d bytes (max: %d)", length, MAX_MQTT_MESSAGE_SIZE);
+    return;
+  }
+
   String messageTemp;
   messageTemp.reserve(length);
-  for (int i = 0; i < length; i++)
+  for (unsigned int i = 0; i < length; i++)
   {
     messageTemp += (char)message[i];
   }
 
   log_i("Message: %s", messageTemp.c_str());
 
-  messageTemp.toLowerCase();
-
   if (strcmp(topic, mqtt_topic_cmnd) == 0)
   {
-    // Check the payload
-    if (messageTemp == "on")
-    {
-      log_i("Received 'on' command");
-      motor.start(1, FEEDING_DURATION); // Start feeding with 1 portion
-      // Add your code to handle the 'on' command here
-    }
-    else if (messageTemp == "off")
-    {
-      log_i("Received 'off' command");
-      // Add your code to handle the 'off' command here
-      motor.stop(); // Stop feeding
-    }
-    else if (messageTemp.startsWith("feed "))
-    {
-      int portions = messageTemp.substring(5).toInt();
-      if (portions >= 1 && portions <= 10) {
-        log_i("Received 'feed' command with %d portions", portions);
-        start_feeding(portions, FEEDING_DURATION);
-      } else {
-        log_e("Invalid portions value: %d (must be 1-10)", portions);
-      }
-    }
-    else
-    {
-      log_e("Unknown command received");
-    }
+    mqtt_handle_command(messageTemp);
   }
-
-  if (strcmp(topic, mqtt_topic_conf) == 0)
+  else if (strcmp(topic, mqtt_topic_conf) == 0)
   {
-    log_i("Received 'conf' command");
-
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, messageTemp);
-    if (!error)
-    {
-      bool configUpdated = false;
-
-      if (doc["feed01"].is<JsonObject>())
-      {
-        int hour = doc["feed01"]["hour"] | feederSchedule.feed01.hour;
-        int minute = doc["feed01"]["minute"] | feederSchedule.feed01.minute;
-        int8_t portions = doc["feed01"]["portions"] | feederSchedule.feed01.portions;
-
-        // Validate values
-        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && portions >= 1 && portions <= 10)
-        {
-          feederSchedule.feed01.hour = hour;
-          feederSchedule.feed01.minute = minute;
-          feederSchedule.feed01.portions = portions;
-          feederSchedule.feed01.enabled = true;
-          configUpdated = true;
-          log_i("feed01 updated: %02d:%02d, %d portions", hour, minute, portions);
-        }
-        else
-        {
-          log_e("feed01 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
-        }
-      }
-      else
-      {
-        log_w("No feed01 configuration found in JSON.");
-      }
-
-      if (doc["feed02"].is<JsonObject>())
-      {
-        int hour = doc["feed02"]["hour"] | feederSchedule.feed02.hour;
-        int minute = doc["feed02"]["minute"] | feederSchedule.feed02.minute;
-        int8_t portions = doc["feed02"]["portions"] | feederSchedule.feed02.portions;
-
-        // Validate values
-        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && portions >= 1 && portions <= 10)
-        {
-          feederSchedule.feed02.hour = hour;
-          feederSchedule.feed02.minute = minute;
-          feederSchedule.feed02.portions = portions;
-          feederSchedule.feed02.enabled = true;
-          configUpdated = true;
-          log_i("feed02 updated: %02d:%02d, %d portions", hour, minute, portions);
-        }
-        else
-        {
-          log_e("feed02 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
-        }
-      }
-      else
-      {
-        log_w("No feed02 configuration found in JSON.");
-      }
-
-      if (configUpdated)
-      {
-        log_i("Feeder schedule updated from JSON config.");
-      }
-      else
-      {
-        log_w("No valid configuration updates applied.");
-      }
-    }
-    else
-    {
-      log_e("JSON parse error: %s", error.c_str());
-    }
+    mqtt_handle_config(messageTemp);
   }
 
   log_i("MQTT message processing complete.");
@@ -426,29 +467,19 @@ void publish_wifi_status(int minutes, String timestampMsg)
     doc["firmware"] = FIRMWARE_VERSION;
     doc["type"] = FOTA_FIRMWARE_TYPE;
 
-    doc["feed01"]["hour"] = feederSchedule.feed01.hour;
-    doc["feed01"]["minute"] = feederSchedule.feed01.minute;
-    doc["feed01"]["portions"] = feederSchedule.feed01.portions;
-    doc["feed01"]["duration"] = feederSchedule.feed01.duration;
+    // Read feeder schedule with mutex protection
+    if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      doc["feed01"]["hour"] = feederSchedule.feed01.hour;
+      doc["feed01"]["minute"] = feederSchedule.feed01.minute;
+      doc["feed01"]["portions"] = feederSchedule.feed01.portions;
+      doc["feed01"]["duration"] = feederSchedule.feed01.duration;
 
-    doc["feed02"]["hour"] = feederSchedule.feed02.hour;
-    doc["feed02"]["minute"] = feederSchedule.feed02.minute;
-    doc["feed02"]["portions"] = feederSchedule.feed02.portions;
-    doc["feed02"]["duration"] = feederSchedule.feed02.duration;
-
-    // doc["chip"]["revision"] = ESP.getChipRevision();
-    // doc["chip"]["model"] = ESP.getChipModel();
-    // doc["chip"]["cores"] = ESP.getChipCores();
-
-    // doc["heap"]["total"] = ESP.getHeapSize();
-    // doc["heap"]["free"] = ESP.getFreeHeap();
-    // doc["heap"]["minFree"] = ESP.getMinFreeHeap();
-    // doc["heap"]["maxAlloc"] = ESP.getMaxAllocHeap();
-
-    // doc["psram"]["size"] = ESP.getPsramSize();
-    // doc["psram"]["available"] = ESP.getFreePsram();
-    // doc["psram"]["minFree"] = ESP.getMinFreePsram();
-    // doc["psram"]["maxAlloc"] = ESP.getMaxAllocPsram();
+      doc["feed02"]["hour"] = feederSchedule.feed02.hour;
+      doc["feed02"]["minute"] = feederSchedule.feed02.minute;
+      doc["feed02"]["portions"] = feederSchedule.feed02.portions;
+      doc["feed02"]["duration"] = feederSchedule.feed02.duration;
+      xSemaphoreGive(scheduleMutex);
+    }
 
     mqtt_publish_json(mqtt_topic_state, doc);
   }
@@ -459,31 +490,33 @@ void publish_sensor_data(int minutes, String timestampMsg)
   // Every 5 minutes, publish the status
   if ((minutes % 5 == 0))
   {
-    String msg = "";
-
     TempAndHumidity newValues = dht.getTempAndHumidity();
-
-    if (dht.getStatus() != 0)
-    {
-      msg = "ERR";
-      log_e("DHT22 error status: %s", dht.getStatusString());
-    }
-    else
-    {
-      msg = "OK";
-      feederSchedule.dht22Data = newValues;
-    }
 
     JsonDocument doc;
     doc["uptime"] = millis() / 1000;
     doc["time"] = timestampMsg;
 
-    doc["DHT22"]["temperature"] = feederSchedule.dht22Data.temperature;
-    doc["DHT22"]["humidity"] = feederSchedule.dht22Data.humidity;
-    doc["DHT22"]["msg"] = msg;
-
-    // serializeJson(doc, Serial);
-    // Serial.println();
+    if (dht.getStatus() != 0)
+    {
+      log_e("DHT22 error status: %s", dht.getStatusString());
+      doc["DHT22"]["error"] = dht.getStatusString();
+      // Use last known good values if available
+      if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        doc["DHT22"]["temperature"] = feederSchedule.dht22Data.temperature;
+        doc["DHT22"]["humidity"] = feederSchedule.dht22Data.humidity;
+        xSemaphoreGive(scheduleMutex);
+      }
+    }
+    else
+    {
+      // Update stored values with mutex protection
+      if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        feederSchedule.dht22Data = newValues;
+        xSemaphoreGive(scheduleMutex);
+      }
+      doc["DHT22"]["temperature"] = newValues.temperature;
+      doc["DHT22"]["humidity"] = newValues.humidity;
+    }
 
     mqtt_publish_json(mqtt_topic_sensors, doc);
   }

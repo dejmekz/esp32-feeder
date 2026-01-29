@@ -1,6 +1,7 @@
 #include "mqtt_handler.h"
 #include <WiFi.h>
 #include <esp32-hal-log.h>
+#include "config.h"
 
 WiFiClient _wifiClient;
 PubSubClient _mqttClient(_wifiClient);
@@ -42,9 +43,10 @@ void mqtt_connect()
     {
         return;
     }
-    
+
     unsigned long currentTime = millis();
-    if (currentTime - lastMqttAttemptTime >= 30000) { // Attempt to reconnect every 30 seconds
+    if (currentTime - lastMqttAttemptTime >= MQTT_RECONNECT_INTERVAL_MS)
+    {
         lastMqttAttemptTime = currentTime;
 
         if (_mqttClient.connect(_device_name, _user, _password, _mqtt_topic_will, 1, true, willMessageOffline)) {
@@ -54,19 +56,18 @@ void mqtt_connect()
         }
         else
         {
-            log_e("failed, rc=%d try again in 5 seconds", _mqttClient.state());
+            log_e("MQTT connection failed, rc=%d", _mqttClient.state());
         }
     }
 }
 
 bool mqtt_loop()
 {
-    bool isConnected = _mqttClient.loop();
-    if (!isConnected)
+    if (!_mqttClient.loop())
     {
         mqtt_connect();
     }
-    return isConnected;
+    return _mqttClient.connected();  // Return actual current status
 }
 
 bool mqtt_is_connected()
@@ -79,22 +80,22 @@ bool mqtt_publish_json(const char* topic, JsonDocument& doc) {
     char buffer[512];
     size_t len = serializeJson(doc, buffer);
 
-    // Check if JSON was truncated (buffer too small)
-    if (len >= sizeof(buffer)) {
-        log_e("MQTT JSON message too large (%d bytes), truncated to %d bytes for topic: %s", len, sizeof(buffer), topic);
-        // Still try to publish the truncated message, but it may be invalid JSON
-    }
-
     // Check if serialization succeeded
     if (len == 0) {
         log_e("MQTT JSON serialization failed for topic: %s", topic);
         return false;
     }
 
+    // Don't publish truncated JSON - it would be invalid
+    if (len >= sizeof(buffer)) {
+        log_e("MQTT JSON too large (%d bytes), not publishing to: %s", len, topic);
+        return false;
+    }
+
     // Attempt to publish and log result
     bool result = _mqttClient.publish(topic, buffer, len);
     if (!result) {
-        log_e("MQTT publish failed for topic: %s (message size: %d bytes)", topic, len);
+        log_e("MQTT publish failed for topic: %s (size: %d bytes)", topic, len);
     }
 
     return result;
@@ -116,4 +117,12 @@ void mqtt_subscribe(const char* topic, uint8_t qos) {
 void mqtt_set_callback(MQTT_CALLBACK_SIGNATURE, SimpleAction callbackConnected) {
     _mqttClient.setCallback(callback);
     _callbackConnected = callbackConnected;
+}
+
+void mqtt_disconnect() {
+    if (_mqttClient.connected()) {
+        _mqttClient.publish(_mqtt_topic_will, willMessageOffline, true);
+        _mqttClient.disconnect();
+        log_i("MQTT disconnected");
+    }
 }
