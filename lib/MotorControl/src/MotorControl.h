@@ -39,8 +39,8 @@ class MotorControl {
     #endif
     void callCallback(bool feeding);
     MotorControlCallback _onMotorChangeCallback = nullptr;
-    unsigned long _lastMillis, _feedingTime = 0;
-    uint8_t _in1, _in2, _portions, _step = 0;
+    unsigned long _lastMillis = 0, _feedingTime = 0;
+    uint8_t _in1 = 0, _in2 = 0, _portions = 0, _step = 0;
     bool _isRunning = false;
 };
 

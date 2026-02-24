@@ -9,9 +9,6 @@
 // External mutex from main.cpp for thread-safe feederSettings access
 extern SemaphoreHandle_t scheduleMutex;
 
-static uint32_t webserverRequestMillis = 0;
-static uint16_t webserverTimeout = 0;
-
 WebServer webserver(80);
 FeederCallback callFeederCallback = nullptr;
 FeederSettings *feederSettings = nullptr;
@@ -77,7 +74,11 @@ static void updateUI()
     doc["runtime"] = get_formated_actual_millis();
 
     char buffer[512];
-    serializeJson(doc, buffer);
+    size_t len = serializeJson(doc, buffer);
+    if (len >= sizeof(buffer)) {
+        webserver.send(500, F("text/plain"), "Response too large");
+        return;
+    }
     webserver.send(200, F("application/json"), buffer);
 }
 
@@ -85,7 +86,7 @@ void handleFeedRequest()
 {
     if (callFeederCallback)
     {
-        callFeederCallback(1, 2000); // Call the feeder callback with 1 portion and 2000 ms
+        callFeederCallback(1, FEEDING_DURATION);
         webserver.send(200, F("text/plain"), "Feeding started");
     }
     else
@@ -118,7 +119,7 @@ void webserver_start(FeederSettings *setting)
     // AJAX request from main page to update readings
     webserver.on("/ui", HTTP_GET, updateUI);
 
-    // AJAX request from main page to update readings
+    // Manual feed trigger from web UI
     webserver.on("/feed", HTTP_GET, handleFeedRequest);
 
     // show irrgation settings
@@ -213,32 +214,3 @@ void webserver_start(FeederSettings *setting)
     log_i(": Webserver started. [%d]", millis());
 }
 
-// change webserver timeout and reset its timer
-void webserver_settimeout(uint16_t timeoutSecs)
-{
-    if (webserverTimeout != timeoutSecs)
-    {
-        log_e("Set webserver timeout to %d secs.", timeoutSecs);
-        webserverTimeout = timeoutSecs;
-    }
-}
-
-// reset timeout countdown
-void webserver_tickle()
-{
-    webserverRequestMillis = millis();
-}
-
-bool webserver_stop(bool force)
-{
-    if (!force && (millis() - webserverRequestMillis) < (webserverTimeout * 1000))
-        return false;
-
-    if (webserverRequestMillis > 0)
-    {
-        webserver.stop();
-        webserverRequestMillis = 0;
-        log_d(": Webserver stopped [%d]", millis());
-    }
-    return true;
-}

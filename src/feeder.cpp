@@ -27,19 +27,3 @@ FeedingSettings* CheckFeedingTime(FeederSettings* schedule, int hours, int minut
 
     return nullptr;
 }
-
-void setFeeder01Schedule(FeederSettings* schedule, int hour, int minute, int8_t portions, bool enabled)
-{
-    schedule->feed01.hour = hour;
-    schedule->feed01.minute = minute;
-    schedule->feed01.portions = portions;
-    schedule->feed01.enabled = enabled;
-}
-
-void setFeeder02Schedule(FeederSettings* schedule, int hour, int minute, int8_t portions, bool enabled)
-{
-    schedule->feed02.hour = hour;
-    schedule->feed02.minute = minute;
-    schedule->feed02.portions = portions;
-    schedule->feed02.enabled = enabled;
-}

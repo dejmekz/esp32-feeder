@@ -10,7 +10,6 @@ void mqtt_init(const char* device_name,const char* server, int port, const char*
 void mqtt_connect();
 
 bool mqtt_loop();
-bool mqtt_is_connected();
 
 bool mqtt_publish_json(const char* topic, JsonDocument& doc);
 bool mqtt_publish(const char *topic, const char *payload);

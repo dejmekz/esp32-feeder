@@ -18,24 +18,19 @@ Button::Button(uint8_t pin, long delay)
   init(delay);
 }
 
-Button::Button(uint8_t pin)
-{
-  _pin = pin;
-  pinMode(_pin, INPUT);
-
-  init(50);
-}
+Button::Button(uint8_t pin) : Button(pin, 50) {}
 
 void Button::init(long delay)
 {
   _lastTime = 0;
   _delay = delay;
   _lastState = HIGH;
+  _state = HIGH;
 }
 
 uint8_t Button::status()
 {
-  return _lastState;
+  return _state;
 }
 
 uint8_t Button::read()

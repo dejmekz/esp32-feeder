@@ -64,11 +64,6 @@ bool wifi_loop()
     return isConnected && wifiConnected;
 }
 
-bool wifi_is_connected()
-{
-    return WiFi.status() == WL_CONNECTED;
-}
-
 void wifi_add_info(JsonDocument &doc)
 {
     doc["wifi"]["ssid"] = WiFi.SSID();

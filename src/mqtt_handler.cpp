@@ -18,6 +18,19 @@ static unsigned long lastMqttAttemptTime = 0;
 
 SimpleAction _callbackConnected = nullptr;
 
+static void log_publish_error(const char* topic, size_t payloadLen)
+{
+    uint16_t bufSize = _mqttClient.getBufferSize();
+    size_t packetSize = payloadLen + 2 + 1 + 2 + strlen(topic); // MQTT framing overhead
+    if (!_mqttClient.connected()) {
+        log_e("MQTT publish failed [%s]: not connected (state=%d)", topic, _mqttClient.state());
+    } else if (packetSize > bufSize) {
+        log_e("MQTT publish failed [%s]: packet %d bytes exceeds buffer %d bytes", topic, packetSize, bufSize);
+    } else {
+        log_e("MQTT publish failed [%s]: payload=%d bytes, packet~=%d bytes", topic, payloadLen, packetSize);
+    }
+}
+
 void mqtt_init_after_connect()
 {
     if (_callbackConnected)
@@ -34,7 +47,7 @@ void mqtt_init(const char* device_name,const char* server, int port, const char*
     _mqtt_topic_will = mqtt_topic_will;
 
     _mqttClient.setServer(server, port);
-    //_mqttClient.setCallback([](char* topic, byte* payload, unsigned int length) {
+    _mqttClient.setBufferSize(512);
 }
 
 void mqtt_connect()
@@ -51,7 +64,9 @@ void mqtt_connect()
 
         if (_mqttClient.connect(_device_name, _user, _password, _mqtt_topic_will, 1, true, willMessageOffline)) {
             log_i("MQTT connected");
-            _mqttClient.publish(_mqtt_topic_will, willMessageOnline, true);
+            if (!_mqttClient.publish(_mqtt_topic_will, willMessageOnline, true)) {
+                log_publish_error(_mqtt_topic_will, strlen(willMessageOnline));
+            }
             mqtt_init_after_connect();
         }
         else
@@ -69,12 +84,6 @@ bool mqtt_loop()
     }
     return _mqttClient.connected();  // Return actual current status
 }
-
-bool mqtt_is_connected()
-{
-    return _mqttClient.connected();
-}
-
 
 bool mqtt_publish_json(const char* topic, JsonDocument& doc) {
     char buffer[512];
@@ -95,7 +104,7 @@ bool mqtt_publish_json(const char* topic, JsonDocument& doc) {
     // Attempt to publish and log result
     bool result = _mqttClient.publish(topic, buffer, len);
     if (!result) {
-        log_e("MQTT publish failed for topic: %s (size: %d bytes)", topic, len);
+        log_publish_error(topic, len);
     }
 
     return result;
@@ -105,7 +114,7 @@ bool mqtt_publish(const char *topic, const char *payload)
 {
     bool result = _mqttClient.publish(topic, payload);
     if (!result) {
-        log_e("MQTT publish failed for topic: %s", topic);
+        log_publish_error(topic, strlen(payload));
     }
     return result;
 }
@@ -121,7 +130,9 @@ void mqtt_set_callback(MQTT_CALLBACK_SIGNATURE, SimpleAction callbackConnected) 
 
 void mqtt_disconnect() {
     if (_mqttClient.connected()) {
-        _mqttClient.publish(_mqtt_topic_will, willMessageOffline, true);
+        if (!_mqttClient.publish(_mqtt_topic_will, willMessageOffline, true)) {
+            log_publish_error(_mqtt_topic_will, strlen(willMessageOffline));
+        }
         _mqttClient.disconnect();
         log_i("MQTT disconnected");
     }

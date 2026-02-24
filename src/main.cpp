@@ -62,9 +62,9 @@ void synchronize_clock_from_ntp();
 void setup_variables();
 bool validateFeedingConfig(int hour, int minute, int8_t portions);
 
-void publish_wifi_status(int minutes, String timestampMsg);
-void publish_sensor_data(int minutes, String timestampMsg);
-void checkIfExistNewFirmware(int hours, int minutes);
+void publish_wifi_status(int minutes, const String& timestampMsg);
+void publish_sensor_data(int minutes, const String& timestampMsg);
+void checkIfExistNewFirmware(int minutes);
 
 void mid_night_reset(int hours, int minutes);
 
@@ -129,9 +129,10 @@ void loop()
     is_mqtt_connected = false;
   }
 
-  motor.loop();  
+  motor.loop();
+  const bool motorRunning = motor.isRunning();
 
-  if (motor.isRunning())
+  if (motorRunning)
   {
     LedBlue.blink();
   }
@@ -157,7 +158,7 @@ void loop()
     synchronize_clock_from_ntp();
 
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo))
+    if (getLocalTime(&timeinfo, 100))
     {
       int minutes = timeinfo.tm_min;
       int hours = timeinfo.tm_hour;
@@ -172,26 +173,34 @@ void loop()
       {
         previous_minutes = minutes;
 
-        mid_night_reset(hours, minutes);
+        int8_t portions_to_feed = 0;
+        unsigned long duration_to_feed = 0;
 
-        FeedingSettings *feedingSetting = CheckFeedingTime(&feederSchedule, hours, minutes);
-        if (feedingSetting != nullptr)
-        {
-          log_i("Feeding time detected: %d portions at %02d:%02d for %d ms", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute, feedingSetting->duration);
-          start_feeding(feedingSetting->portions, feedingSetting->duration);
+        if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+          mid_night_reset(hours, minutes);
+
+          FeedingSettings *feedingSetting = CheckFeedingTime(&feederSchedule, hours, minutes);
+          if (feedingSetting != nullptr)
+          {
+            log_i("Feeding time detected: %d portions at %02d:%02d for %d ms", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute, feedingSetting->duration);
+            portions_to_feed = feedingSetting->portions;
+            duration_to_feed = feedingSetting->duration;
+          }
+          xSemaphoreGive(scheduleMutex);
+        } else {
+          log_e("Failed to acquire mutex for schedule check");
         }
 
-        checkIfExistNewFirmware(hours, minutes);
+        if (portions_to_feed > 0) {
+          start_feeding(portions_to_feed, duration_to_feed);
+        }
+
+        checkIfExistNewFirmware(minutes);
 
         if (is_mqtt_connected)
         {
           publish_wifi_status(minutes, timestampMsg);
           publish_sensor_data(minutes, timestampMsg);
-
-          if (minutes == 0) // Every hour
-          {
-            mqtt_publish_feeding_status(motor.isRunning());
-          }
         }
       }
     }
@@ -365,12 +374,7 @@ void mqtt_message_handler(char *topic, byte *message, unsigned int length)
     return;
   }
 
-  String messageTemp;
-  messageTemp.reserve(length);
-  for (unsigned int i = 0; i < length; i++)
-  {
-    messageTemp += (char)message[i];
-  }
+  String messageTemp((char*)message, length);
 
   log_i("Message: %s", messageTemp.c_str());
 
@@ -388,12 +392,8 @@ void mqtt_message_handler(char *topic, byte *message, unsigned int length)
 
 void setup_variables()
 {
-  uint64_t chipid = ESP.getEfuseMac(); // The chip ID is essentially its MAC address(length: 6 bytes).
-  uint32_t deviceId = 0;
-  for (int i = 0; i < 25; i = i + 8)
-  {
-    deviceId |= ((chipid >> (40 - i)) & 0xff) << i;
-  }
+  uint64_t chipid = ESP.getEfuseMac(); // The chip ID is essentially its MAC address (6 bytes).
+  uint32_t deviceId = (uint32_t)(chipid >> 16); // Use upper 4 bytes of MAC
 
   int written = snprintf(device_name, sizeof(device_name), "feeder-%08X", deviceId);
   if (written >= sizeof(device_name))
@@ -447,7 +447,7 @@ void setup_variables()
   log_i("Device name: %s", device_name);
 }
 
-void publish_wifi_status(int minutes, String timestampMsg)
+void publish_wifi_status(int minutes, const String& timestampMsg)
 {
   if ((minutes % 10 == 0))
   {
@@ -485,7 +485,7 @@ void publish_wifi_status(int minutes, String timestampMsg)
   }
 }
 
-void publish_sensor_data(int minutes, String timestampMsg)
+void publish_sensor_data(int minutes, const String& timestampMsg)
 {
   // Every 5 minutes, publish the status
   if ((minutes % 5 == 0))
@@ -557,9 +557,8 @@ void mqtt_publish_feeding_status(bool feeding)
   mqtt_publish(mqtt_topic_feed, state);
 }
 
-void checkIfExistNewFirmware(int hours, int minutes)
+void checkIfExistNewFirmware(int minutes)
 {
-  // if (hours != 0 || !espMqtt.isWifiConnected())
   if (minutes % 10 != 0 || !is_wifi_connected)
   {
     return;

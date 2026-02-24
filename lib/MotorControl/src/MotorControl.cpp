@@ -1,5 +1,6 @@
 // Motor.cpp
 #include "MotorControl.h"
+#include "config.h"
 
 #ifdef USING_MOTOR
 MotorControl::MotorControl(uint8_t in1, uint8_t in2)
@@ -74,7 +75,8 @@ void MotorControl::stop()
 #else
     _servo.detach(_in1);
 #endif
-    callCallback(false);
+    if (_isRunning)
+        callCallback(false);
     _isRunning = false;
 }
 
@@ -91,10 +93,8 @@ void MotorControl::onMotorChange(MotorControlCallback callback)
 
 void MotorControl::callCallback(bool feeding)
 {
-    {
     if (_onMotorChangeCallback)
         _onMotorChangeCallback(feeding);
-    }
 }
 
 void MotorControl::loop()
@@ -116,13 +116,13 @@ void MotorControl::loop()
         move(MOTOR_BACKWARD);
         _step++;
     }
-    else if (_step == 1 && delayMillis >= 500)
+    else if (_step == 1 && delayMillis >= MOTOR_BACKWARD_DELAY_MS)
     {
         _lastMillis = currentMillis;
         move(MOTOR_STOP);
         _step++;
     }
-    else if (_step == 2 && delayMillis >= 500)
+    else if (_step == 2 && delayMillis >= MOTOR_STOP_DELAY_MS)
     {
         _lastMillis = currentMillis;
         move(MOTOR_FORWARD); // Start moving forward
@@ -134,7 +134,7 @@ void MotorControl::loop()
         move(MOTOR_STOP);
         _step++;
     }
-    else if (_step == 4 && delayMillis >= 1000)
+    else if (_step == 4 && delayMillis >= MOTOR_PORTION_DELAY_MS)
     {
         _lastMillis = currentMillis;
         _portions--;
