@@ -241,7 +241,7 @@ void synchronize_clock_from_ntp()
   configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", NTP_SERVER, NTP_FALLBACK_SERVER);
 
   struct tm timeinfo;
-  if (getLocalTime(&timeinfo))
+  if (getLocalTime(&timeinfo, 100))
   {
     clockSynced = true;
     log_i("Clock synced with NTP server");
@@ -266,7 +266,7 @@ void mqtt_handle_command(const String& message)
   if (cmd == "on")
   {
     log_i("Received 'on' command");
-    motor.start(1, FEEDING_DURATION);
+    start_feeding(1, FEEDING_DURATION);
   }
   else if (cmd == "off")
   {

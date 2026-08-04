@@ -35,7 +35,7 @@ static void updateUI()
 {
     JsonDocument doc;
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo))
+    if (getLocalTime(&timeinfo, 100))
     {
         char temp[12];
         snprintf(temp, 6, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
