@@ -7,6 +7,7 @@
 #include "DHTesp.h"
 
 #include "config.h"
+#include "fota_pubkey.h"
 #include "wifi_handler.h"
 #include "mqtt_handler.h"
 #include "LedPin.h"
@@ -39,6 +40,7 @@ bool is_mqtt_connected = false;
 int previous_minutes = -1;
 
 esp32FOTA esp32_FOTA(FOTA_FIRMWARE_TYPE, FIRMWARE_VERSION, false, true);
+CryptoMemAsset fotaPubKey("FOTA RSA Public Key", FOTA_RSA_PUB_KEY, strlen(FOTA_RSA_PUB_KEY) + 1);
 
 #ifdef USING_MOTOR
 MotorControl motor(MOTOR_PIN_1, MOTOR_PIN_2);
@@ -96,6 +98,7 @@ void setup()
   mqtt_set_callback(mqtt_message_handler, mqtt_setup_after_connect);
 
   esp32_FOTA.setManifestURL(FOTA_MANIFEST_URL);
+  esp32_FOTA.setPubKey(&fotaPubKey); // reject any firmware.img not signed with keys/priv_key.pem
   esp32_FOTA.printConfig();
 
   motor.init();
