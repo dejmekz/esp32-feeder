@@ -134,7 +134,7 @@ function restartSystem() {
     document.getElementById("message").style.height = "16px";
     document.getElementById("sysRestart").style.display = "block";
     document.getElementById("heading").scrollIntoView();
-    xhttp.open("GET", "/restart", true);
+    xhttp.open("POST", "/restart", true);
     xhttp.send();
     setTimeout(function(){location.href='/';}, 15000);
   }
@@ -142,7 +142,7 @@ function restartSystem() {
 
 function feedStart() {
   var xhttp = new XMLHttpRequest();
-  xhttp.open("GET", "/feed", true);
+  xhttp.open("POST", "/feed", true);
   xhttp.send();
 }
 

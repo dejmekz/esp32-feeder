@@ -120,7 +120,7 @@ void webserver_start(FeederSettings *setting)
     webserver.on("/ui", HTTP_GET, updateUI);
 
     // Manual feed trigger from web UI
-    webserver.on("/feed", HTTP_GET, handleFeedRequest);
+    webserver.on("/feed", HTTP_POST, handleFeedRequest);
 
     // show irrgation settings
     webserver.on("/config", HTTP_GET, []()
@@ -184,13 +184,13 @@ void webserver_start(FeederSettings *setting)
         webserver.send(302, "text/plain", ""); });
 
     // soft reboot (short deep sleep, RTC memory is preserved)
-    webserver.on("/restart", HTTP_GET, []()
+    webserver.on("/restart", HTTP_POST, []()
                  {
                      webserver.send(200, "text/plain", "OK");
                      restartSystem(); });
 
     // triggers ESP.restart() thus RTC memory is lost
-    webserver.on("/reset", HTTP_GET, []()
+    webserver.on("/reset", HTTP_POST, []()
                  {
                      webserver.send(200, "text/plain", "OK");
                      resetSystem(); });
