@@ -31,6 +31,15 @@
 
 // NTP configuration
 #define NTP_SERVER "cz.pool.ntp.org" // NTP server for time synchronization
+#define NTP_FALLBACK_SERVER "pool.ntp.org"
+
+// Timing constants
+#define MOTOR_BACKWARD_DELAY_MS 500
+#define MOTOR_STOP_DELAY_MS 500
+#define MOTOR_PORTION_DELAY_MS 1000
+#define LOOP_CHECK_INTERVAL_MS 10000
+#define WIFI_RECONNECT_INTERVAL_MS 60000
+#define MQTT_RECONNECT_INTERVAL_MS 30000
 
 // FOTA (Firmware Over The Air) configuration
 // Uncomment and configure based on your motor type:
@@ -57,6 +66,7 @@
 #define FEEDING_PORTIONS_02 4 // Default number of feeding portions
 
 // Limits
+#define MAX_MQTT_MESSAGE_SIZE 1024
 #define MAX_PORTIONS 10
 #define MIN_FEEDING_DURATION_MS 1000
 #define MAX_FEEDING_DURATION_MS 60000
