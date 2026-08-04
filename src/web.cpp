@@ -143,16 +143,20 @@ void webserver_start(FeederSettings *setting)
         int h1 = webserver.arg("h01").toInt();
         int m1 = webserver.arg("m01").toInt();
         int8_t p1 = webserver.arg("p01").toInt();
+        unsigned long d1 = (unsigned long)webserver.arg("d01").toInt() * 1000UL; // form is in seconds
         int h2 = webserver.arg("h02").toInt();
         int m2 = webserver.arg("m02").toInt();
         int8_t p2 = webserver.arg("p02").toInt();
+        unsigned long d2 = (unsigned long)webserver.arg("d02").toInt() * 1000UL;
 
         // Validate feeding times
         if (h1 < 0 || h1 > 23 || m1 < 0 || m1 > 59 ||
             h2 < 0 || h2 > 23 || m2 < 0 || m2 > 59 ||
-            p1 < 1 || p1 > MAX_PORTIONS || p2 < 1 || p2 > MAX_PORTIONS)
+            p1 < 1 || p1 > MAX_PORTIONS || p2 < 1 || p2 > MAX_PORTIONS ||
+            d1 < MIN_FEEDING_DURATION_MS || d1 > MAX_FEEDING_DURATION_MS ||
+            d2 < MIN_FEEDING_DURATION_MS || d2 > MAX_FEEDING_DURATION_MS)
         {
-            webserver.send(400, "text/plain", "Invalid feeding time or portions");
+            webserver.send(400, "text/plain", "Invalid feeding time, portions, or duration");
             return;
         }
 
@@ -161,11 +165,13 @@ void webserver_start(FeederSettings *setting)
             feederSettings->feed01.hour = h1;
             feederSettings->feed01.minute = m1;
             feederSettings->feed01.portions = p1;
+            feederSettings->feed01.duration = d1;
             feederSettings->feed01.enabled = true;
 
             feederSettings->feed02.hour = h2;
             feederSettings->feed02.minute = m2;
             feederSettings->feed02.portions = p2;
+            feederSettings->feed02.duration = d2;
             feederSettings->feed02.enabled = true;
 
             // Save to NVS for persistence
@@ -177,8 +183,8 @@ void webserver_start(FeederSettings *setting)
             return;
         }
 
-        log_i("Feeder 1: %02d:%02d, portions: %d", h1, m1, p1);
-        log_i("Feeder 2: %02d:%02d, portions: %d", h2, m2, p2);
+        log_i("Feeder 1: %02d:%02d, portions: %d, duration: %lu ms", h1, m1, p1, d1);
+        log_i("Feeder 2: %02d:%02d, portions: %d, duration: %lu ms", h2, m2, p2, d2);
 
         webserver.sendHeader("Location", "/config?saved=1", true);
         webserver.send(302, "text/plain", ""); });

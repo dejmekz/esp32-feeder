@@ -84,6 +84,12 @@ function getReadings() {
       if ("por02" in json) {
         document.getElementById("p02").value = json.por02;
       }
+      if ("dur01" in json) {
+        document.getElementById("d01").value = Math.round(json.dur01 / 1000);
+      }
+      if ("dur02" in json) {
+        document.getElementById("d02").value = Math.round(json.dur02 / 1000);
+      }
     }
   };
   xhttp.open("GET", "/ui", true);
@@ -107,14 +113,16 @@ function initPage() {
 </div>
 
 <div style="max-width:335px;margin-top:10px;">
-<form method="POST" action="/config" onsubmit="return checkInput();">
+<form method="POST" action="/config">
   <fieldset><legend><b>&nbsp;Feeding time setting&nbsp;</b></legend>
   <p>H:<input type="number" id="h01" name="h01" min="0" max="23" value="12">&nbsp;
   M:<input type="number" id="m01" name="m01" min="0" max="59" value="30">&nbsp;
-  P:<input type="number" id="p01" name="p01" min="0" max="10" value="5"></p>
+  P:<input type="number" id="p01" name="p01" min="0" max="10" value="5">&nbsp;
+  D(s):<input type="number" id="d01" name="d01" min="1" max="60" value="10"></p>
   <p>H:<input type="number" id="h02" name="h02" min="0" max="23" value="12">&nbsp;
   M:<input type="number" id="m02" name="m02" min="0" max="59" value="30">&nbsp;
-  P:<input type="number" id="p02" name="p02" min="0" max="10" value="5"></p>
+  P:<input type="number" id="p02" name="p02" min="0" max="10" value="5">&nbsp;
+  D(s):<input type="number" id="d02" name="d02" min="1" max="60" value="10"></p>
   </fieldset><br />
   <p><button class="button bred" type="submit">Save settings</button></p>
 </form>

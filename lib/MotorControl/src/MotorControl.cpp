@@ -56,7 +56,6 @@ void MotorControl::move(MotorDirection direction)
 
 void MotorControl::start(uint8_t portions, unsigned long feedingTime)
 {
-    _lastMillis = millis();
     _step = 0;
     _portions = portions;
     _feedingTime = feedingTime;

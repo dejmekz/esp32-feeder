@@ -25,7 +25,7 @@ FeederSettings feederSchedule = {
 // Mutex for thread-safe access to feederSchedule
 SemaphoreHandle_t scheduleMutex = NULL;
 
-char device_name[16]; // 15 + 1 - delka řetězce + 1 :)
+char device_name[16]; // "feeder-XXXXXXXX" (15 chars) + null terminator
 char mqtt_topic_sensors[31];
 char mqtt_topic_will[27];
 char mqtt_topic_cmnd[28];
@@ -62,7 +62,7 @@ void mqtt_handle_config(const String& message);
 void mqtt_setup_after_connect();
 void synchronize_clock_from_ntp();
 void setup_variables();
-bool validateFeedingConfig(int hour, int minute, int8_t portions);
+bool validateFeedingConfig(int hour, int minute, int8_t portions, unsigned long duration);
 
 void publish_wifi_status(int minutes, const String& timestampMsg);
 void publish_sensor_data(int minutes, const String& timestampMsg);
@@ -253,11 +253,12 @@ void synchronize_clock_from_ntp()
 }
 
 // Validate feeding configuration values
-bool validateFeedingConfig(int hour, int minute, int8_t portions)
+bool validateFeedingConfig(int hour, int minute, int8_t portions, unsigned long duration)
 {
   return hour >= 0 && hour <= 23 &&
          minute >= 0 && minute <= 59 &&
-         portions >= 1 && portions <= MAX_PORTIONS;
+         portions >= 1 && portions <= MAX_PORTIONS &&
+         duration >= MIN_FEEDING_DURATION_MS && duration <= MAX_FEEDING_DURATION_MS;
 }
 
 // Handle MQTT command messages (cmnd topic)
@@ -317,19 +318,21 @@ void mqtt_handle_config(const String& message)
     int hour = doc["feed01"]["hour"] | feederSchedule.feed01.hour;
     int minute = doc["feed01"]["minute"] | feederSchedule.feed01.minute;
     int8_t portions = doc["feed01"]["portions"] | feederSchedule.feed01.portions;
+    unsigned long duration = doc["feed01"]["duration"] | feederSchedule.feed01.duration;
 
-    if (validateFeedingConfig(hour, minute, portions))
+    if (validateFeedingConfig(hour, minute, portions, duration))
     {
       feederSchedule.feed01.hour = hour;
       feederSchedule.feed01.minute = minute;
       feederSchedule.feed01.portions = portions;
+      feederSchedule.feed01.duration = duration;
       feederSchedule.feed01.enabled = true;
       configUpdated = true;
-      log_i("feed01 updated: %02d:%02d, %d portions", hour, minute, portions);
+      log_i("feed01 updated: %02d:%02d, %d portions, %lu ms", hour, minute, portions, duration);
     }
     else
     {
-      log_e("feed01 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
+      log_e("feed01 validation failed: hour=%d, minute=%d, portions=%d, duration=%lu", hour, minute, portions, duration);
     }
   }
 
@@ -338,19 +341,21 @@ void mqtt_handle_config(const String& message)
     int hour = doc["feed02"]["hour"] | feederSchedule.feed02.hour;
     int minute = doc["feed02"]["minute"] | feederSchedule.feed02.minute;
     int8_t portions = doc["feed02"]["portions"] | feederSchedule.feed02.portions;
+    unsigned long duration = doc["feed02"]["duration"] | feederSchedule.feed02.duration;
 
-    if (validateFeedingConfig(hour, minute, portions))
+    if (validateFeedingConfig(hour, minute, portions, duration))
     {
       feederSchedule.feed02.hour = hour;
       feederSchedule.feed02.minute = minute;
       feederSchedule.feed02.portions = portions;
+      feederSchedule.feed02.duration = duration;
       feederSchedule.feed02.enabled = true;
       configUpdated = true;
-      log_i("feed02 updated: %02d:%02d, %d portions", hour, minute, portions);
+      log_i("feed02 updated: %02d:%02d, %d portions, %lu ms", hour, minute, portions, duration);
     }
     else
     {
-      log_e("feed02 validation failed: hour=%d, minute=%d, portions=%d", hour, minute, portions);
+      log_e("feed02 validation failed: hour=%d, minute=%d, portions=%d, duration=%lu", hour, minute, portions, duration);
     }
   }
 

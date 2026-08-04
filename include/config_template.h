@@ -56,4 +56,9 @@
 #define FEEDING_MINUTE_02 0
 #define FEEDING_PORTIONS_02 4 // Default number of feeding portions
 
+// Limits
+#define MAX_PORTIONS 10
+#define MIN_FEEDING_DURATION_MS 1000
+#define MAX_FEEDING_DURATION_MS 60000
+
 #endif
