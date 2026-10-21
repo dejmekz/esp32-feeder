@@ -42,17 +42,16 @@
 #define WIFI_RECONNECT_INTERVAL_MS 60000
 #define MQTT_RECONNECT_INTERVAL_MS 30000
 
-// FOTA (Firmware Over The Air) configuration
-// Uncomment and configure based on your motor type:
+// OTA (ArduinoOTA) password - must match "password" in ota.secret.ini
+#define OTA_PASSWORD "YourOtaPassword"
 
+// Firmware version, based on your motor type:
 #ifdef USING_MOTOR
 #define FIRMWARE_VERSION "0.0.8"
-#define FOTA_MANIFEST_URL "http://your-server.local/fota/feeder-motor/fota.json"
-#define FOTA_FIRMWARE_TYPE "esp32-feeder-motor"
+#define FIRMWARE_TYPE "esp32-feeder-motor"
 #else
 #define FIRMWARE_VERSION "0.0.11"
-#define FOTA_MANIFEST_URL "http://your-server.local/fota/feeder-servo/fota.json"
-#define FOTA_FIRMWARE_TYPE "esp32-feeder-servo"
+#define FIRMWARE_TYPE "esp32-feeder-servo"
 #endif
 
 // Feeding schedule configuration

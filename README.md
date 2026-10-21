@@ -28,37 +28,21 @@ Studio Code](https://code.visualstudio.com/) and install the [PlatformIO
 add-on](https://platformio.org/install/ide?install=vscode). Open the project
 directory and adjust the settings in `include/config.h` to your needs.
 
-For further firmware updates is used library esp32FOTA.
+## Firmware update over WiFi (OTA)
 
-## Useful libraries
-[esp32FOTA library for Arduino](https://github.com/chrisjoyce911/esp32FOTA)
+Further firmware updates are pushed over WiFi with ArduinoOTA, no update
+server is needed. The first firmware with OTA must be uploaded over USB.
 
-## Firmware signing
+1. Set `OTA_PASSWORD` in `include/config.h`.
+2. Copy `ota.secret.ini.example` as `ota.secret.ini` (not in git) and set
+   the same password and the device host name. The device name is printed
+   at startup (`Device name: feeder-XXXXXXXX`), the host is
+   `feeder-XXXXXXXX.local` (or use the IP address).
+3. Upload: `pio run -e ota -t upload`
 
-OTA firmware images are fetched over plain HTTP, so the device verifies an
-RSA-4096/SHA256 signature (via esp32FOTA) before switching to a downloaded
-image. This is checked independently of transport, so it also rejects a
-tampered image even from a MITM on the network.
-
-One-time setup — generate a signing keypair (never commit `priv_key.pem`;
-it's already gitignored under `keys/`):
-```
-mkdir -p keys
-openssl genrsa -out keys/priv_key.pem 4096
-openssl rsa -in keys/priv_key.pem -pubout -out keys/rsa_key.pub
-```
-Then paste the contents of `keys/rsa_key.pub` into `include/fota_pubkey.h`
-(replacing the existing `FOTA_RSA_PUB_KEY` block) and rebuild/flash the
-device once so it trusts the new key.
-
-For every release, sign the compiled firmware before uploading it to the
-FOTA server:
-```
-pio run -e esp32-c3-devkitm-1
-scripts/sign_firmware.sh .pio/build/esp32-c3-devkitm-1/firmware.bin firmware.img
-```
-Upload `firmware.img` (not the raw `.bin`) to the FOTA server and point
-`fota.json`'s `bin`/URL fields at it, as usual for esp32FOTA.
+The motor stops and the device goes offline in MQTT when the upload starts.
+The reason of the last restart is published as `reset` in the
+`feeder/<device>/wifi` topic (e.g. `brownout`, `task watchdog`).
 
 > [!IMPORTANT]
 > rename include config_tamplate.h to config.h

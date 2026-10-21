@@ -5,7 +5,7 @@
 
 // Lower TX power = lower current peaks while transmitting. At full power
 // (19.5 dBm) TX peaks combined with motor/servo start or flash writes
-// (FOTA) can cause a brownout reset. Override in config.h if needed.
+// (OTA) can cause a brownout reset. Override in config.h if needed.
 #ifndef WIFI_TX_POWER
 #define WIFI_TX_POWER WIFI_POWER_11dBm
 #endif

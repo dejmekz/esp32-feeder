@@ -2,13 +2,12 @@
 #include <esp_system.h>
 #include <Arduino.h>
 #include <esp32-hal-log.h>
-#include <esp32fota.h>
 #include <freertos/semphr.h>
 
 #include "DHTesp.h"
 
 #include "config.h"
-#include "fota_pubkey.h"
+#include "ota.h"
 #include "wifi_handler.h"
 #include "mqtt_handler.h"
 #include "LedPin.h"
@@ -39,9 +38,6 @@ bool is_wifi_connected = false;
 bool is_mqtt_connected = false;
 
 int previous_minutes = -1;
-
-esp32FOTA esp32_FOTA(FOTA_FIRMWARE_TYPE, FIRMWARE_VERSION, false, true);
-CryptoMemAsset fotaPubKey("FOTA RSA Public Key", FOTA_RSA_PUB_KEY, strlen(FOTA_RSA_PUB_KEY) + 1);
 
 #ifdef USING_MOTOR
 MotorControl motor(MOTOR_PIN_1, MOTOR_PIN_2);
@@ -85,7 +81,7 @@ bool validateFeedingConfig(int hour, int minute, int8_t portions, unsigned long 
 
 void publish_wifi_status(int minutes, const String& timestampMsg);
 void publish_sensor_data(int minutes, const String& timestampMsg);
-void checkIfExistNewFirmware(int minutes);
+void ota_on_start();
 
 void mid_night_reset(int hours, int minutes);
 
@@ -116,13 +112,7 @@ void setup()
   mqtt_init(device_name, MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD, mqtt_topic_will);
   mqtt_set_callback(mqtt_message_handler, mqtt_setup_after_connect);
 
-  esp32_FOTA.setManifestURL(FOTA_MANIFEST_URL);
-  esp32_FOTA.setPubKey(&fotaPubKey); // reject any firmware.img not signed with keys/priv_key.pem
-  // The whole download + flash runs inside handle(), loop() is blocked meanwhile.
-  // Reset the watchdog per data block, otherwise a slow download ends in a task watchdog reset.
-  esp32_FOTA.setProgressCb([](size_t progress, size_t size)
-                           { esp_task_wdt_reset(); });
-  esp32_FOTA.printConfig();
+  ota_init(device_name, OTA_PASSWORD, ota_on_start);
 
   motor.init();
   motor.onMotorChange(mqtt_publish_feeding_status);
@@ -147,6 +137,7 @@ void loop()
   webserver.handleClient();
   LedRed.blink();
   is_wifi_connected = wifi_loop();
+  ota_loop(is_wifi_connected);
 
   if (is_wifi_connected)
   {
@@ -222,8 +213,6 @@ void loop()
         if (portions_to_feed > 0) {
           start_feeding(portions_to_feed, duration_to_feed);
         }
-
-        checkIfExistNewFirmware(minutes);
 
         if (is_mqtt_connected)
         {
@@ -499,7 +488,7 @@ void publish_wifi_status(int minutes, const String& timestampMsg)
     doc["time"] = timestampMsg;
     doc["name"] = device_name;
     doc["firmware"] = FIRMWARE_VERSION;
-    doc["type"] = FOTA_FIRMWARE_TYPE;
+    doc["type"] = FIRMWARE_TYPE;
 
     // Read feeder schedule with mutex protection
     if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -591,12 +580,10 @@ void mqtt_publish_feeding_status(bool feeding)
   mqtt_publish(mqtt_topic_feed, state);
 }
 
-void checkIfExistNewFirmware(int minutes)
+// loop() is blocked during the upload - stop the motor so it doesn't run
+// for the whole upload, and go offline in MQTT before the restart.
+void ota_on_start()
 {
-  if (minutes % 10 != 0 || !is_wifi_connected)
-  {
-    return;
-  }
-
-  esp32_FOTA.handle(); // Check for updates
+  motor.reset(); // clears remaining portions, feeding doesn't resume if the upload fails
+  mqtt_disconnect();
 }
