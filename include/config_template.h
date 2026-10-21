@@ -4,7 +4,13 @@
 // WiFi configuration
 #define WIFI_SSID "YourSSID"       // Replace with your WiFi SSID
 #define WIFI_PASSWORD "YourPassword" // Replace with your WiFi password
-#define WIFI_TX_POWER WIFI_POWER_11dBm // Lower TX power = lower current peaks => no brownout reset
+// WiFi TX power (wifi_power_t). Lower power = lower current peaks => no brownout reset,
+// but a weaker uplink. The motor feeder has a weaker signal at the AP, so it uses more.
+#ifdef USING_MOTOR
+#define WIFI_TX_POWER WIFI_POWER_15dBm
+#else
+#define WIFI_TX_POWER WIFI_POWER_11dBm
+#endif
 
 // MQTT configuration
 #define MQTT_SERVER "YourMQTTServer"   // Replace with your MQTT server address
