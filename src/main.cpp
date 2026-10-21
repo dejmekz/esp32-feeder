@@ -54,7 +54,7 @@ LedPin LedRed(LED_RED_PIN, true);
 LedPin LedBlue(LED_BLUE_PIN, true);
 Button ButtonFeed(BUTTON_PIN, 100);
 
-bool clockSynced = false;
+volatile bool clockSynced = false; // cleared from the WiFi event task
 unsigned long lastLoopCheckMillis = 0;
 const char *reset_reason = "unknown";
 

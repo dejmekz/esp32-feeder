@@ -11,12 +11,13 @@
 #endif
 
 // External flag from main.cpp - reset on disconnect to force NTP resync
-extern bool clockSynced;
+extern volatile bool clockSynced;
 
 static const char *_wifi_ssid = nullptr;
 static const char *_wifi_password = nullptr;
-static unsigned long lastWifiAttemptTime = 0;
-static bool wifiConnected = false;
+static unsigned long wifiDisconnectedSince = 0;
+// Written from the WiFi event task, read from loop()
+static volatile bool wifiConnected = false;
 
 void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info){
     log_i("WiFi connected - IP address: %s", WiFi.localIP().toString().c_str());
@@ -41,36 +42,43 @@ void wifi_init(const char *device_name, const char *ssid, const char *password)
     WiFi.onEvent(WiFiGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
     WiFi.onEvent(WiFiDisconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
-    wifi_connect(true);
-}
-
-void wifi_connect(bool rst)
-{
-    WiFi.disconnect(true, rst);
-    delay(1000);                   // short delay to avoid overloading
+    WiFi.persistent(false);        // don't write credentials to flash on every begin()
     WiFi.mode(WIFI_STA); // Set WiFi mode to Station
-    // disconnect(true) turned the radio off, which resets TX power - apply it on every connect
     WiFi.setTxPower(WIFI_TX_POWER);
+    // Mains powered: without modem sleep the device reliably answers
+    // web requests and MQTT keepalive.
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
     wl_status_t status = WiFi.begin(_wifi_ssid, _wifi_password);
     log_i("Connecting to WiFi SSID: %s, status: %d", _wifi_ssid, status);
-    delay(50); // short delay to avoid overloading
 }
 
+// Common dropouts are handled by the library's auto reconnect. Restart the
+// connection manually only when not connected for WIFI_RECONNECT_INTERVAL_MS.
+// The radio stays on, so TX power and sleep settings are kept.
 bool wifi_loop()
 {
     bool isConnected = WiFi.status() == WL_CONNECTED;
-    if (!isConnected)
+    if (isConnected)
     {
-        log_v("WiFi not connected - status: %d", WiFi.status());  // Changed to verbose level
-        unsigned long currentTime = millis();
-        if (currentTime - lastWifiAttemptTime >= WIFI_RECONNECT_INTERVAL_MS)
-        {
-            lastWifiAttemptTime = currentTime;
-            log_i("Reconnecting to WiFi...");
-            wifi_connect(false);
-        }
+        wifiDisconnectedSince = 0;
+        return wifiConnected;
     }
-    return isConnected && wifiConnected;
+
+    log_v("WiFi not connected - status: %d", WiFi.status());
+    unsigned long currentTime = millis();
+    if (wifiDisconnectedSince == 0)
+    {
+        wifiDisconnectedSince = currentTime;
+    }
+    else if (currentTime - wifiDisconnectedSince >= WIFI_RECONNECT_INTERVAL_MS)
+    {
+        wifiDisconnectedSince = currentTime;
+        log_i("WiFi not connected for %lu s, reconnecting...", WIFI_RECONNECT_INTERVAL_MS / 1000);
+        WiFi.disconnect();
+        WiFi.begin(_wifi_ssid, _wifi_password);
+    }
+    return false;
 }
 
 void wifi_add_info(JsonDocument &doc)
