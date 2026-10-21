@@ -3,6 +3,13 @@
 #include <esp32-hal-log.h>
 #include "config.h"
 
+// Lower TX power = lower current peaks while transmitting. At full power
+// (19.5 dBm) TX peaks combined with motor/servo start or flash writes
+// (FOTA) can cause a brownout reset. Override in config.h if needed.
+#ifndef WIFI_TX_POWER
+#define WIFI_TX_POWER WIFI_POWER_11dBm
+#endif
+
 // External flag from main.cpp - reset on disconnect to force NTP resync
 extern bool clockSynced;
 
@@ -42,6 +49,8 @@ void wifi_connect(bool rst)
     WiFi.disconnect(true, rst);
     delay(1000);                   // short delay to avoid overloading
     WiFi.mode(WIFI_STA); // Set WiFi mode to Station
+    // disconnect(true) turned the radio off, which resets TX power - apply it on every connect
+    WiFi.setTxPower(WIFI_TX_POWER);
     wl_status_t status = WiFi.begin(_wifi_ssid, _wifi_password);
     log_i("Connecting to WiFi SSID: %s, status: %d", _wifi_ssid, status);
     delay(50); // short delay to avoid overloading

@@ -4,6 +4,7 @@
 // WiFi configuration
 #define WIFI_SSID "YourSSID"       // Replace with your WiFi SSID
 #define WIFI_PASSWORD "YourPassword" // Replace with your WiFi password
+#define WIFI_TX_POWER WIFI_POWER_11dBm // Lower TX power = lower current peaks => no brownout reset
 
 // MQTT configuration
 #define MQTT_SERVER "YourMQTTServer"   // Replace with your MQTT server address

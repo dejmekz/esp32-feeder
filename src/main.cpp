@@ -1,4 +1,5 @@
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #include <Arduino.h>
 #include <esp32-hal-log.h>
 #include <esp32fota.h>
@@ -55,6 +56,24 @@ Button ButtonFeed(BUTTON_PIN, 100);
 
 bool clockSynced = false;
 unsigned long lastLoopCheckMillis = 0;
+const char *reset_reason = "unknown";
+
+static const char *reset_reason_text(esp_reset_reason_t reason)
+{
+  switch (reason)
+  {
+  case ESP_RST_POWERON:   return "power on";
+  case ESP_RST_EXT:       return "external pin";
+  case ESP_RST_SW:        return "software";
+  case ESP_RST_PANIC:     return "panic";
+  case ESP_RST_INT_WDT:   return "interrupt watchdog";
+  case ESP_RST_TASK_WDT:  return "task watchdog";
+  case ESP_RST_WDT:       return "watchdog";
+  case ESP_RST_DEEPSLEEP: return "deep sleep";
+  case ESP_RST_BROWNOUT:  return "brownout";
+  default:                return "unknown";
+  }
+}
 
 void mqtt_message_handler(char *topic, byte *message, unsigned int length);
 void mqtt_handle_command(const String& message);
@@ -99,6 +118,10 @@ void setup()
 
   esp32_FOTA.setManifestURL(FOTA_MANIFEST_URL);
   esp32_FOTA.setPubKey(&fotaPubKey); // reject any firmware.img not signed with keys/priv_key.pem
+  // The whole download + flash runs inside handle(), loop() is blocked meanwhile.
+  // Reset the watchdog per data block, otherwise a slow download ends in a task watchdog reset.
+  esp32_FOTA.setProgressCb([](size_t progress, size_t size)
+                           { esp_task_wdt_reset(); });
   esp32_FOTA.printConfig();
 
   motor.init();
@@ -108,7 +131,9 @@ void setup()
   LedRed.off();
 
   // Serial.begin(115200);
-  log_i("Starting Feeder...");
+  const esp_reset_reason_t reason = esp_reset_reason();
+  reset_reason = reset_reason_text(reason);
+  log_i("Starting Feeder... reset reason %d (%s)", (int)reason, reset_reason);
   dht.setup(DHT22_PIN, DHTesp::DHT22);
 
   webserver_start(&feederSchedule);
@@ -462,6 +487,7 @@ void publish_wifi_status(int minutes, const String& timestampMsg)
     JsonDocument doc;
     doc["uptime"] = millis() / 1000;
     doc["time"] = timestampMsg;
+    doc["reset"] = reset_reason;
 
     doc["wifi"]["name"] = device_name;
 
