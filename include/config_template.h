@@ -53,7 +53,7 @@
 
 // Firmware version, based on your motor type:
 #ifdef USING_MOTOR
-#define FIRMWARE_VERSION "0.0.9"
+#define FIRMWARE_VERSION "0.0.10"
 #define FIRMWARE_TYPE "esp32-feeder-motor"
 #else
 #define FIRMWARE_VERSION "0.0.12"

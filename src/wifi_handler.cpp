@@ -49,6 +49,10 @@ void wifi_init(const char *device_name, const char *ssid, const char *password)
     // web requests and MQTT keepalive.
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
+    // More APs with the same SSID: scan all channels and connect to the strongest one,
+    // not to the first one found (default fast scan).
+    WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+    WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
     wl_status_t status = WiFi.begin(_wifi_ssid, _wifi_password);
     log_i("Connecting to WiFi SSID: %s, status: %d", _wifi_ssid, status);
 }
