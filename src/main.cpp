@@ -246,6 +246,10 @@ void mqtt_setup_after_connect()
   log_i("MQTT connection established, setting up subscriptions...");
   mqtt_subscribe(mqtt_topic_cmnd, 0);
   mqtt_subscribe(mqtt_topic_conf, 0);
+
+  // Current feeding state - after a reset/disconnect during feeding the "OFF"
+  // was never delivered and openHAB would show feeding forever.
+  mqtt_publish(mqtt_topic_feed, motor.isRunning() ? "ON" : "OFF");
 }
 
 void synchronize_clock_from_ntp()
