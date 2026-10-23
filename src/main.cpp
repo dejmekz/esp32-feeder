@@ -36,6 +36,7 @@ char mqtt_topic_state[29];
 
 bool is_wifi_connected = false;
 bool is_mqtt_connected = false;
+bool stateChanged = false; // schedule changed via conf, publish state
 
 int previous_minutes = -1;
 
@@ -81,6 +82,7 @@ bool validateFeedingConfig(int hour, int minute, int8_t portions, unsigned long 
 
 void publish_wifi_status(int minutes, const String& timestampMsg);
 void publish_sensor_data(int minutes, const String& timestampMsg);
+void publish_state(const String& timestampMsg);
 void ota_on_start();
 
 void mid_night_reset(int hours, int minutes);
@@ -220,6 +222,13 @@ void loop()
           publish_sensor_data(minutes, timestampMsg);
         }
       }
+
+      // Confirm a schedule change from the conf topic without waiting for the 10 min status
+      if (stateChanged && is_mqtt_connected)
+      {
+        stateChanged = false;
+        publish_state(timestampMsg);
+      }
     }
     else
     {
@@ -270,12 +279,12 @@ void synchronize_clock_from_ntp()
   }
 }
 
-// Validate feeding configuration values
+// Validate feeding configuration values (portions 0 = this feeding is skipped)
 bool validateFeedingConfig(int hour, int minute, int8_t portions, unsigned long duration)
 {
   return hour >= 0 && hour <= 23 &&
          minute >= 0 && minute <= 59 &&
-         portions >= 1 && portions <= MAX_PORTIONS &&
+         portions >= 0 && portions <= MAX_PORTIONS &&
          duration >= MIN_FEEDING_DURATION_MS && duration <= MAX_FEEDING_DURATION_MS;
 }
 
@@ -380,6 +389,7 @@ void mqtt_handle_config(const String& message)
   if (configUpdated)
   {
     nvs_save_feeder_config(&feederSchedule);
+    stateChanged = true;
     log_i("Feeder schedule updated and saved to NVS");
   }
   else
@@ -489,29 +499,33 @@ void publish_wifi_status(int minutes, const String& timestampMsg)
     wifi_add_info(doc); // Add WiFi info to the JSON document
     mqtt_publish_json(mqtt_topic_wifi, doc);
 
-    doc.clear(); // Clear the document for the next use
-
-    doc["time"] = timestampMsg;
-    doc["name"] = device_name;
-    doc["firmware"] = FIRMWARE_VERSION;
-    doc["type"] = FIRMWARE_TYPE;
-
-    // Read feeder schedule with mutex protection
-    if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-      doc["feed01"]["hour"] = feederSchedule.feed01.hour;
-      doc["feed01"]["minute"] = feederSchedule.feed01.minute;
-      doc["feed01"]["portions"] = feederSchedule.feed01.portions;
-      doc["feed01"]["duration"] = feederSchedule.feed01.duration;
-
-      doc["feed02"]["hour"] = feederSchedule.feed02.hour;
-      doc["feed02"]["minute"] = feederSchedule.feed02.minute;
-      doc["feed02"]["portions"] = feederSchedule.feed02.portions;
-      doc["feed02"]["duration"] = feederSchedule.feed02.duration;
-      xSemaphoreGive(scheduleMutex);
-    }
-
-    mqtt_publish_json(mqtt_topic_state, doc);
+    publish_state(timestampMsg);
   }
+}
+
+void publish_state(const String& timestampMsg)
+{
+  JsonDocument doc;
+  doc["time"] = timestampMsg;
+  doc["name"] = device_name;
+  doc["firmware"] = FIRMWARE_VERSION;
+  doc["type"] = FIRMWARE_TYPE;
+
+  // Read feeder schedule with mutex protection
+  if (xSemaphoreTake(scheduleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    doc["feed01"]["hour"] = feederSchedule.feed01.hour;
+    doc["feed01"]["minute"] = feederSchedule.feed01.minute;
+    doc["feed01"]["portions"] = feederSchedule.feed01.portions;
+    doc["feed01"]["duration"] = feederSchedule.feed01.duration;
+
+    doc["feed02"]["hour"] = feederSchedule.feed02.hour;
+    doc["feed02"]["minute"] = feederSchedule.feed02.minute;
+    doc["feed02"]["portions"] = feederSchedule.feed02.portions;
+    doc["feed02"]["duration"] = feederSchedule.feed02.duration;
+    xSemaphoreGive(scheduleMutex);
+  }
+
+  mqtt_publish_json(mqtt_topic_state, doc);
 }
 
 void publish_sensor_data(int minutes, const String& timestampMsg)

@@ -152,7 +152,7 @@ void webserver_start(FeederSettings *setting)
         // Validate feeding times
         if (h1 < 0 || h1 > 23 || m1 < 0 || m1 > 59 ||
             h2 < 0 || h2 > 23 || m2 < 0 || m2 > 59 ||
-            p1 < 1 || p1 > MAX_PORTIONS || p2 < 1 || p2 > MAX_PORTIONS ||
+            p1 < 0 || p1 > MAX_PORTIONS || p2 < 0 || p2 > MAX_PORTIONS || // 0 = skip feeding
             d1 < MIN_FEEDING_DURATION_MS || d1 > MAX_FEEDING_DURATION_MS ||
             d2 < MIN_FEEDING_DURATION_MS || d2 > MAX_FEEDING_DURATION_MS)
         {

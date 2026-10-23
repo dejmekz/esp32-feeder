@@ -56,7 +56,7 @@
 #define FIRMWARE_VERSION "0.0.12"
 #define FIRMWARE_TYPE "esp32-feeder-motor"
 #else
-#define FIRMWARE_VERSION "0.0.14"
+#define FIRMWARE_VERSION "0.0.16"
 #define FIRMWARE_TYPE "esp32-feeder-servo"
 #endif
 
