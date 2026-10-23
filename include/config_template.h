@@ -13,7 +13,9 @@
 #endif
 
 // MQTT configuration
-#define MQTT_SERVER "YourMQTTServer"   // Replace with your MQTT server address
+// Use the broker IP, not a ".local" name: mDNS resolution is unreliable and every
+// failed attempt delays the MQTT connection by MQTT_RECONNECT_INTERVAL_MS
+#define MQTT_SERVER "YourMQTTServer"   // Replace with your MQTT server IP address
 #define MQTT_PORT 1883                 // Default MQTT port
 #define MQTT_USER "mqttuser"           // Replace with your MQTT username
 #define MQTT_PASSWORD "mqttpassword"   // Replace with your MQTT password
@@ -56,7 +58,7 @@
 #define FIRMWARE_VERSION "0.0.12"
 #define FIRMWARE_TYPE "esp32-feeder-motor"
 #else
-#define FIRMWARE_VERSION "0.0.16"
+#define FIRMWARE_VERSION "0.0.17"
 #define FIRMWARE_TYPE "esp32-feeder-servo"
 #endif
 

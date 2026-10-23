@@ -15,6 +15,13 @@ static const char* _password;
 static const char* _mqtt_topic_will;
 
 static unsigned long lastMqttAttemptTime = 0;
+static bool firstAttemptDone = false;
+
+// Diagnostics, published in the wifi status
+static uint16_t connectCount = 0;
+static uint16_t failedCount = 0;
+static int lastFailedState = 0;
+static unsigned long lastConnectedAt = 0;
 
 SimpleAction _callbackConnected = nullptr;
 
@@ -58,18 +65,24 @@ void mqtt_connect()
     }
 
     unsigned long currentTime = millis();
-    if (currentTime - lastMqttAttemptTime >= MQTT_RECONNECT_INTERVAL_MS)
+    // First attempt right after WiFi is up, then every MQTT_RECONNECT_INTERVAL_MS
+    if (!firstAttemptDone || currentTime - lastMqttAttemptTime >= MQTT_RECONNECT_INTERVAL_MS)
     {
+        firstAttemptDone = true;
         lastMqttAttemptTime = currentTime;
 
         if (_mqttClient.connect(_device_name, _user, _password, _mqtt_topic_will, 1, true, willMessageOffline)) {
+            connectCount++;
+            lastConnectedAt = millis() / 1000;
             log_i("MQTT connected");
             mqtt_publish_online();
             mqtt_init_after_connect();
         }
         else
         {
-            log_e("MQTT connection failed, rc=%d", _mqttClient.state());
+            failedCount++;
+            lastFailedState = _mqttClient.state();
+            log_e("MQTT connection failed, rc=%d", lastFailedState);
         }
     }
 }
@@ -119,6 +132,14 @@ bool mqtt_publish_online()
         log_publish_error(_mqtt_topic_will, strlen(willMessageOnline));
     }
     return result;
+}
+
+void mqtt_add_info(JsonDocument &doc)
+{
+    doc["mqtt"]["connects"] = connectCount;    // since boot
+    doc["mqtt"]["failed"] = failedCount;       // failed attempts since boot
+    doc["mqtt"]["lastRc"] = lastFailedState;   // state of the last failed attempt
+    doc["mqtt"]["connectedAt"] = lastConnectedAt; // uptime (s) of the last connect
 }
 
 bool mqtt_publish(const char *topic, const char *payload)

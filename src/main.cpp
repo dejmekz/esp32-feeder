@@ -497,6 +497,7 @@ void publish_wifi_status(int minutes, const String& timestampMsg)
     doc["wifi"]["name"] = device_name;
 
     wifi_add_info(doc); // Add WiFi info to the JSON document
+    mqtt_add_info(doc);
     mqtt_publish_json(mqtt_topic_wifi, doc);
 
     publish_state(timestampMsg);
