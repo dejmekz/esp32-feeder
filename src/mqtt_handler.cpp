@@ -64,9 +64,7 @@ void mqtt_connect()
 
         if (_mqttClient.connect(_device_name, _user, _password, _mqtt_topic_will, 1, true, willMessageOffline)) {
             log_i("MQTT connected");
-            if (!_mqttClient.publish(_mqtt_topic_will, willMessageOnline, true)) {
-                log_publish_error(_mqtt_topic_will, strlen(willMessageOnline));
-            }
+            mqtt_publish_online();
             mqtt_init_after_connect();
         }
         else
@@ -102,11 +100,24 @@ bool mqtt_publish_json(const char* topic, JsonDocument& doc) {
     }
 
     // Attempt to publish and log result
-    bool result = _mqttClient.publish(topic, buffer, len);
+    // Retained: openHAB reads the last state/wifi/sensors values after its restart
+    bool result = _mqttClient.publish(topic, (const uint8_t*)buffer, len, true);
     if (!result) {
         log_publish_error(topic, len);
     }
 
+    return result;
+}
+
+// Retained "online" in the LWT topic. Published after connect and repeated with
+// the periodic status, so a cleared retained message is restored (openHAB reads
+// it after restart).
+bool mqtt_publish_online()
+{
+    bool result = _mqttClient.publish(_mqtt_topic_will, willMessageOnline, true);
+    if (!result) {
+        log_publish_error(_mqtt_topic_will, strlen(willMessageOnline));
+    }
     return result;
 }
 

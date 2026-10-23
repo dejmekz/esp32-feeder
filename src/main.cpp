@@ -473,6 +473,8 @@ void publish_wifi_status(int minutes, const String& timestampMsg)
 {
   if ((minutes % 10 == 0))
   {
+    mqtt_publish_online(); // restore the retained LWT if it was cleared on the broker
+
     JsonDocument doc;
     doc["uptime"] = millis() / 1000;
     doc["time"] = timestampMsg;

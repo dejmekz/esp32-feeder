@@ -13,6 +13,7 @@ bool mqtt_loop();
 
 bool mqtt_publish_json(const char* topic, JsonDocument& doc);
 bool mqtt_publish(const char *topic, const char *payload);
+bool mqtt_publish_online();
 
 void mqtt_set_callback(MQTT_CALLBACK_SIGNATURE, SimpleAction callbackConnected);
 void mqtt_subscribe(const char* topic, uint8_t qos);
