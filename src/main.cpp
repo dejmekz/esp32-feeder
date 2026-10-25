@@ -192,6 +192,9 @@ void loop()
 
       if (previous_minutes != minutes)
       {
+        // First valid time after boot: don't start a scheduled feeding in this minute.
+        // A reset during feeding (e.g. brownout from a stuck motor) must not repeat it.
+        const bool firstMinuteAfterBoot = (previous_minutes < 0);
         previous_minutes = minutes;
 
         int8_t portions_to_feed = 0;
@@ -201,7 +204,11 @@ void loop()
           mid_night_reset(hours, minutes);
 
           FeedingSettings *feedingSetting = CheckFeedingTime(&feederSchedule, hours, minutes);
-          if (feedingSetting != nullptr)
+          if (feedingSetting != nullptr && firstMinuteAfterBoot)
+          {
+            log_w("Feeding at %02d:%02d skipped: device booted in the feeding minute", feedingSetting->hour, feedingSetting->minute);
+          }
+          else if (feedingSetting != nullptr)
           {
             log_i("Feeding time detected: %d portions at %02d:%02d for %d ms", feedingSetting->portions, feedingSetting->hour, feedingSetting->minute, feedingSetting->duration);
             portions_to_feed = feedingSetting->portions;
